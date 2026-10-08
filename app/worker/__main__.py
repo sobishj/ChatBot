@@ -13,6 +13,7 @@ from types import FrameType
 
 from app.config import get_settings
 from app.db.session import check_database
+from app.db.startup import prepare_database
 from app.logging_setup import configure_logging
 
 logger = logging.getLogger("app.worker")
@@ -23,6 +24,7 @@ POLL_SECONDS = 30
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    prepare_database()
     stop = threading.Event()
 
     def _request_stop(signum: int, _frame: FrameType | None) -> None:

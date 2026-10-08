@@ -24,3 +24,8 @@ Thumbs.db
 # Watched document folders (contents are client data)
 watched/*
 !watched/.gitkeep
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo

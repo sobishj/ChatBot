@@ -19,6 +19,7 @@ from fastapi import FastAPI
 
 from app.admin_app import create_admin_app
 from app.config import get_settings
+from app.db.startup import prepare_database
 from app.logging_setup import configure_logging
 from app.public_app import create_public_app
 
@@ -54,6 +55,7 @@ async def serve() -> None:
     """Start both servers and stop them together on SIGINT/SIGTERM."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    prepare_database()
 
     servers = [
         _server(create_admin_app(), settings.admin_port, settings.forwarded_allow_ips, settings.log_level),

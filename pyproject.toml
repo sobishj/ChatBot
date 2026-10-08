@@ -11,6 +11,8 @@ addopts = "-ra -p no:cacheprovider"
 filterwarnings = [
     # Starlette's TestClient uses an alias deprecated by newer anyio; harmless.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+    # Generated column (chunks.content_tsv) is compared by autogenerate; expected.
+    "ignore:Computed default on chunks.content_tsv cannot be modified:UserWarning",
 ]
 markers = [
     "integration: needs the real Postgres database (skipped automatically when unreachable)",
