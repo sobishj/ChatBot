@@ -57,7 +57,9 @@ def test_no_api_docs_exposed(factory: Any) -> None:
     app: FastAPI = factory()
     client = TestClient(app)
     for path in ("/docs", "/redoc", "/openapi.json"):
-        assert client.get(path).status_code == 404
+        resp = client.get(path)
+        # The admin port serves the React app for unknown paths; it must never be API docs.
+        assert resp.status_code == 404 or ("swagger" not in resp.text.lower() and '"openapi"' not in resp.text)
 
 
 @pytest.mark.integration

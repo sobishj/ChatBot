@@ -13,7 +13,17 @@ filterwarnings = [
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
     # Generated column (chunks.content_tsv) is compared by autogenerate; expected.
     "ignore:Computed default on chunks.content_tsv cannot be modified:UserWarning",
+    "ignore:Did not recognize type .vector. of column .embedding.",
 ]
 markers = [
     "integration: needs the real Postgres database (skipped automatically when unreachable)",
 ]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# B008: FastAPI's Depends()/File() defaults are idiomatic.
+ignore = ["E501", "B008"]

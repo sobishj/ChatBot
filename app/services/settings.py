@@ -53,6 +53,7 @@ DEFAULTS: dict[str, Any] = {
     },
     # Scheduling
     "crawl_schedule": {"frequency": "daily", "time": "03:00", "weekday": 0},  # weekday 0 = Monday
+    "timezone": "UTC",  # IANA name used for the crawl schedule, e.g. Asia/Kolkata
     # Rate limits (requests per minute)
     "rate_limits": {"chat_per_ip_per_minute": 20, "chat_per_client_per_minute": 300, "login_per_ip_per_15min": 10},
     # Privacy

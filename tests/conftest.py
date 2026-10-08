@@ -86,3 +86,44 @@ def db(live_db: None) -> Iterator[Session]:
         session.execute(text(f"TRUNCATE {ALL_TABLES} RESTART IDENTITY CASCADE"))
         session.commit()
         session.close()
+
+
+# ----------------------------------------------------------------------------- shared helpers
+@pytest.fixture
+def embedder(db: Session):
+    """Install the fake embedder (and a matching vector column) for this test."""
+    from app.embeddings.model import set_embedder_for_tests
+    from app.indexer.schema import ensure_embedding_column
+    from app.services.settings import set_setting
+    from tests.fakes import FakeEmbedder
+
+    fake = FakeEmbedder()
+    ensure_embedding_column(db, fake.dim)
+    set_setting(db, "embedding", {"model": fake.name, "dim": fake.dim, "path": "/fake", "status": "ready", "error": None})
+    db.commit()
+    set_embedder_for_tests(fake)
+    yield fake
+    set_embedder_for_tests(None)
+
+
+@pytest.fixture
+def make_client(db: Session):
+    """Factory creating a client with sensible defaults."""
+    from app.services.clients import create_client
+
+    def _make(slug: str = "acme", name: str = "Acme", website: str = "https://www.acme.test", domains: list[str] | None = None):
+        client = create_client(db, slug, name, website, domains)
+        db.commit()
+        return client
+
+    return _make
+
+
+@pytest.fixture
+def ai_model(db: Session):
+    """A saved default model (provider/URL irrelevant: tests use FakeLLM)."""
+    from app.services.ai_models import save_model
+
+    model = save_model(db, {"name": "Main", "provider": "openai_compatible", "base_url": "http://llm.test/v1", "model_name": "main-model"})
+    db.commit()
+    return model

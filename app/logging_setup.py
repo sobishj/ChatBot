@@ -12,3 +12,6 @@ def configure_logging(level: str = "INFO") -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         force=True,
     )
+    # Third-party loggers that are chatty at INFO level.
+    for name in ("apscheduler", "httpx", "LiteLLM", "litellm", "sentence_transformers", "huggingface_hub"):
+        logging.getLogger(name).setLevel(logging.WARNING)
