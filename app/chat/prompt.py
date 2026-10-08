@@ -61,9 +61,19 @@ def build_messages(
     return messages
 
 
+# Secondary signal for models that forget the tag: common "I don't know" phrasings.
+_NO_INFO_RE = re.compile(
+    r"\b(?:do(?:es)? not|don't|doesn't|cannot|can't|couldn't|unable to)\s+(?:have|find|provide|see|locate)\b"
+    r"[^.?!]{0,40}\b(?:information|details|info|answer)\b"
+    r"|\bno (?:information|details) (?:about|on|regarding)\b"
+    r"|\bnot (?:mentioned|available|provided) in the (?:context|information)\b",
+    re.IGNORECASE,
+)
+
+
 def parse_answer(raw: str) -> tuple[str, bool]:
     """Return (clean answer, model_said_no_answer)."""
-    flagged = bool(_NO_ANSWER_RE.search(raw))
+    flagged = bool(_NO_ANSWER_RE.search(raw)) or bool(_NO_INFO_RE.search(raw))
     clean = _NO_ANSWER_RE.sub("", raw).strip()
     # Some models wrap their reply in thinking tags; never show those.
     clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()

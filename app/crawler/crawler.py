@@ -139,7 +139,10 @@ class Crawler:
                 body += chunk
                 if len(body) > MAX_PAGE_BYTES:
                     break
-            return httpx.Response(resp.status_code, headers=resp.headers, content=body, request=resp.request)
+            # iter_bytes() already decompressed the body: drop the encoding headers so the
+            # rebuilt response isn't decoded a second time.
+            headers = [(k, v) for k, v in resp.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
+            return httpx.Response(resp.status_code, headers=headers, content=body, request=resp.request)
 
     # ----------------------------------------------------------------- robots + sitemaps
     def load_robots(self) -> None:

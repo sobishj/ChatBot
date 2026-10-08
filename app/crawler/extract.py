@@ -34,6 +34,19 @@ _BLOCK_TAGS = {
     "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "address", "figure", "figcaption", "br", "hr",
 }
 _SKIP_LINES = {"skip to main content", "skip to content", "menu", "close", "search"}
+# Call-to-action link labels ("Know More »", "View Store ›", "Read more →") carry no facts
+# and interleave with real content (e.g. between every movie title).
+_CTA_RE = re.compile(
+    r"^(?:read|know|learn|view|see|show|find out|discover|explore)(?: \w+){0,2}\s*[»›→>]*$|^.{0,30}\s[»›→]$",
+    re.IGNORECASE,
+)
+
+
+def _is_noise(line: str) -> bool:
+    lowered = line.lower()
+    if lowered in _SKIP_LINES:
+        return True
+    return len(line.split()) <= 4 and bool(_CTA_RE.match(line)) and not any(ch.isdigit() for ch in line)
 MAX_TEXT_CHARS = 200_000
 
 
@@ -84,7 +97,7 @@ def _structural_text(doc: lxml_html.HtmlElement) -> str:
     lines: list[str] = []
     for raw in root.text_content().splitlines():
         line = re.sub(r"\s+", " ", raw).strip(" |")
-        if line and line.lower() not in _SKIP_LINES:
+        if line and not _is_noise(line):
             lines.append(line)
     return "\n".join(lines)
 

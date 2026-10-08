@@ -117,3 +117,27 @@ def test_robots_server_error_stops_crawl() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(RobotsBlocked):
         Crawler(CrawlConfig(start_url=SITE, delay_seconds=0), client=client).crawl(lambda p: None)
+
+
+def test_gzip_encoded_responses() -> None:
+    """Real servers send gzip; the size-capped fetch must not decode twice."""
+    import gzip as _gzip
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            body, ctype = b"User-agent: *" + bytes([10]) + b"Disallow:" + bytes([10]), "text/plain"
+        elif request.url.path == "/":
+            body, ctype = page("Home", "<p>Gzipped welcome</p>").encode(), "text/html; charset=UTF-8"
+        else:
+            return httpx.Response(404)
+        return httpx.Response(200, content=_gzip.compress(body), headers={"content-type": ctype, "content-encoding": "gzip"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    pages, result = crawl(client)
+    assert result.failed == 0 and pages and "Gzipped welcome" in pages[0].text
+
+
+def test_extract_drops_call_to_action_links() -> None:
+    html = page("Movies", "<div>Zootopia 2</div><div><a>Know More »</a></div><div>Dheeram</div><div><a>View Store ›</a></div><div>Read more</div><div>View Website</div><div>Located on</div><div>Second Floor</div>")
+    text = extract(html, SITE + "/movies/").text
+    assert text.splitlines() == ["Movies", "Zootopia 2", "Dheeram", "Located on", "Second Floor"]

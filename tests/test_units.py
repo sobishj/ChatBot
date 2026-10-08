@@ -236,3 +236,17 @@ def test_crawl_due_weekly_and_off() -> None:
     assert crawl_due(weekly, monday, _at(2026, 9, 28, 3, 1).isoformat())
     assert not crawl_due(weekly, _at(2026, 10, 7, 12, 0), monday.isoformat())
     assert not crawl_due({"frequency": "off"}, monday, None)
+
+
+@pytest.mark.parametrize(
+    "reply, flagged",
+    [
+        ("I'm sorry, but I don't have that information. Please contact the mall.", True),
+        ("I don't have information about helicopter pads at the mall.", True),
+        ("Sorry, I couldn't find any details on that.", True),
+        ("ASICS is on the Second Floor, open 10 AM to 10 PM.", False),
+        ("We have information desks on every floor.", False),
+    ],
+)
+def test_parse_answer_detects_untagged_no_answer(reply: str, flagged: bool) -> None:
+    assert parse_answer(reply)[1] is flagged
