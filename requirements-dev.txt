@@ -1,0 +1,2 @@
+# Test / development dependencies (installed in the image only when INSTALL_DEV=true).
+pytest==8.3.4
