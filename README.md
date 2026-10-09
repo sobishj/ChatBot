@@ -37,15 +37,16 @@ with low confidence are marked *unanswered* so they show up in Stats.
 5. [Website crawling](#5-website-crawling)
 6. [Documents: upload and watched folders](#6-documents-upload-and-watched-folders)
 7. [AI models](#7-ai-models)
-8. [Embedding the widget](#8-embedding-the-widget)
-9. [Users and roles](#9-users-and-roles)
-10. [Cloud vs on-premise](#10-cloud-vs-on-premise)
-11. [HTTPS](#11-https)
-12. [Backups and restore](#12-backups-and-restore)
-13. [CLI (developers and recovery)](#13-cli-developers-and-recovery)
-14. [Development and tests](#14-development-and-tests)
-15. [Configuration reference](#15-configuration-reference)
-16. [Troubleshooting](#16-troubleshooting)
+8. [API actions (optional)](#8-api-actions-optional)
+9. [Embedding the widget](#9-embedding-the-widget)
+10. [Users and roles](#10-users-and-roles)
+11. [Cloud vs on-premise](#11-cloud-vs-on-premise)
+12. [HTTPS](#12-https)
+13. [Backups and restore](#13-backups-and-restore)
+14. [CLI (developers and recovery)](#14-cli-developers-and-recovery)
+15. [Development and tests](#15-development-and-tests)
+16. [Configuration reference](#16-configuration-reference)
+17. [Troubleshooting](#17-troubleshooting)
 
 ---
 
@@ -148,7 +149,7 @@ are always indexed with the current model.
 Open `http://<server>:8001/setup`. The wizard is available only until setup is completed.
 
 1. **Super admin account**: name, email and password (at least 10 characters).
-2. **Mode**: *Cloud* (many clients) or *On-premise* (one client). See [section 10](#10-cloud-vs-on-premise).
+2. **Mode**: *Cloud* (many clients) or *On-premise* (one client). See [section 11](#11-cloud-vs-on-premise).
 3. **Public domain**: the address websites load the widget from, e.g. `chat.sprintgames.online`
    (no `http://`). For local testing you can use `localhost:8000`.
 4. **First AI model**: pick a provider, then fill in the URL, model name and API key.
@@ -273,7 +274,95 @@ address Docker can reach (for example `0.0.0.0`, or the Docker bridge IP).
 In on-premise mode, choosing a cloud provider shows a warning: *visitor questions and content
 will be sent outside this server.*
 
-## 8. Embedding the widget
+## 8. API actions (optional)
+
+API actions let the assistant use a client's **own API** for live data and changes, for
+example checking free appointment slots and booking an appointment, in addition to answering
+from crawled pages and documents.
+
+**Off by default** for every client. While it is off (or no action is enabled), chat works
+exactly as before.
+
+### Turning it on
+
+1. Open the client → **API actions** and switch on **Enable API actions for this client**
+   (super admins only; client admins see the configuration read-only, without the key).
+2. **Connection**:
+   - **API URL**: the base URL, e.g. `https://api.hospital.example/v1`. Action paths are added to it.
+   - **Authentication**: *Header* (e.g. `X-API-Key: <key>`), *Bearer* (`Authorization: Bearer <key>`)
+     or *Query* (`?api_key=<key>`), plus the header or parameter name.
+   - **API key**: stored encrypted with `SECRET_KEY` and shown only as `••••1234`. Saving with
+     the field empty keeps the current key; **Replace key** sets a new one.
+   - **Timeout** (default 15 s), optional **extra headers**, and an optional **health check
+     path** used by **Test connection**.
+3. **Actions**: each has a snake_case **name** (e.g. `get_slots`), a **description** that tells
+   the assistant when to use it, a **method** and **path** (with `{placeholders}` for path
+   parameters, e.g. `/doctors/{doctor_id}/slots`), **parameters** (name, type: string,
+   integer, number, boolean, date, phone or email; location: path, query or body; required;
+   description; optional allowed values), and an optional **response hint** (which fields
+   matter, e.g. "returns booking_id"). **Test** runs one action with parameters you enter.
+4. Try it in **Test chat**: the diagnostics panel lists every action call with parameters,
+   status, time and a response excerpt.
+
+**Templates → Appointment booking** adds `list_departments`, `list_doctors`, `get_slots`,
+`book_appointment` and `cancel_appointment`. They match the demo API below; adjust paths and
+parameters to the client's real API.
+
+### How a booking works
+
+1. The visitor asks; the assistant searches the content as usual and may call read-only
+   actions (`GET`) such as `get_slots`, up to 4 rounds per message.
+2. When it wants to run an action that changes data, the server does **not** run it. It stores
+   the request for this conversation (10 minutes) and replies with a summary written by the
+   server, e.g. *Please confirm: Book appointment (doctor id: 1, date: 2026-10-12, time: 09:30,
+   patient name: Sobish, phone: 98xxxxxx10). Reply yes to confirm or no to cancel.* The widget
+   shows **Confirm** and **Cancel** buttons.
+3. Only a clear yes (or the Confirm button) runs it; the assistant then reports the booking ID
+   or the API's error. "No"/Cancel drops it, and any other message replaces it.
+
+### Security
+
+- The key, the API URL and the action definitions never reach the browser or the widget; the
+  public chat API returns only the reply and, when needed, the confirmation summary.
+- **Confirmation is enforced by the server** for every action that changes data (non-GET
+  actions always require it); the model cannot skip it.
+- **Every parameter is validated** against its type before a call (ISO dates, phone numbers,
+  emails, allowed values, required fields, at most 500 characters); unknown parameters are rejected.
+- **SSRF protection:** in cloud mode the URL must be `https://` and must not resolve to a
+  private, loopback, link-local or metadata address. This is checked when saving and again
+  before every call; redirects are never followed. On-premise mode allows internal addresses
+  (the client's API is often on the local network) and shows a warning.
+- **Personal data:** the model sees phone numbers and emails only as placeholders such as
+  `[phone_1]`; the real values are put back only in the request to the client's API. The call
+  log masks them, and saved questions contain only the placeholders.
+- API responses are cut to about 4,000 characters and given to the model as untrusted data,
+  not instructions.
+- **Rate limits** (Settings → Rate limits): 20 action calls per conversation per hour and
+  3 confirmed changes per conversation per day by default. Calls time out after the configured
+  timeout; only `GET` requests are retried, once, on connection errors.
+- **Recent calls** on the tab (and the retention setting) cover every call, with status and time.
+- Disabling the feature keeps the configuration but stops using it immediately.
+
+### Demo with the mock booking API
+
+```bash
+pip install fastapi uvicorn            # on the host, from the repository folder
+uvicorn demo.mock_booking_api:app --host 0.0.0.0 --port 8100
+```
+
+Switch to **On-premise** mode (the demo runs on plain HTTP on the host), then for the client:
+API URL `http://host.docker.internal:8100`, authentication **Header** `X-API-Key`, key
+`demo-key`, health check path `/health`. Click **Test connection**, add the **Appointment
+booking** template and ask in Test chat: *"I need a cardiologist on Monday"*, then
+*"Book 9:30 for Sobish, phone 9876543210"* and press **Confirm**.
+
+### Model requirements
+
+Actions need a model with reliable tool calling: GPT-4o-mini or newer, Claude, Gemini, or a
+local Qwen 7B or larger (Ollama, vLLM). Small models such as Qwen 1.5B are not reliable. If a
+model rejects tools, the assistant answers from the content as usual and logs a warning.
+
+## 9. Embedding the widget
 
 Copy the line from client → **Embed code**:
 
@@ -299,7 +388,7 @@ cd demo && python -m http.server 5500
 # open http://localhost:5500/?client=lulu-kochi&api=http://localhost:8000
 ```
 
-## 9. Users and roles
+## 10. Users and roles
 
 **Users** (super admin only):
 
@@ -311,7 +400,7 @@ cd demo && python -m http.server 5500
 Disabling a user or changing their password signs them out everywhere. There is always at
 least one active super admin.
 
-## 10. Cloud vs on-premise
+## 11. Cloud vs on-premise
 
 The code is the same in both modes. You choose the mode in the setup wizard and can change it
 later in **Settings → Clients mode**. Switching keeps all content, settings, users and statistics.
@@ -329,7 +418,7 @@ automatically); that client becomes the assistant.
 local model, and the server needs no internet access. LiteLLM's price list is bundled, and
 Hugging Face telemetry is disabled.
 
-## 11. HTTPS
+## 12. HTTPS
 
 Websites served over HTTPS can only load the widget over HTTPS. Caddy is included as an
 **optional** compose profile, off by default. It obtains Let's Encrypt certificates
@@ -351,7 +440,7 @@ automatically.
 Ports 80 and 443 must be open. Session cookies are marked `Secure` automatically when the
 admin UI is reached over HTTPS.
 
-## 12. Backups and restore
+## 13. Backups and restore
 
 **System health → Download backup** streams a PostgreSQL dump of everything: settings,
 users, clients, pages, passages, questions and jobs.
@@ -365,7 +454,7 @@ docker compose exec -T db pg_restore -U chatbot -d chatbot --clean --if-exists <
 - Uploaded files, logos and the model cache live in the `appdata` volume. Back them up with
   `docker run --rm -v website-assistant_appdata:/data -v "$PWD":/out alpine tar czf /out/appdata.tgz -C /data .`
 
-## 13. CLI (developers and recovery)
+## 14. CLI (developers and recovery)
 
 Everything is available in the UI. The CLI calls the same service functions.
 
@@ -377,10 +466,11 @@ docker compose exec app python cli.py stats lulu-kochi --days 30
 docker compose exec app python cli.py reset-admin-password admin@example.com
 ```
 
-## 14. Development and tests
+## 15. Development and tests
 
 ```
 app/
+  actions/      API actions: tool schema, executor (validation, SSRF guard), confirmations, chat flow
   admin/        admin API routes, auth dependencies, CSRF middleware, SPA hosting
   api/          public API (chat, config, widget.js, logo) and /health
   analytics/    stats, conversations, CSV export, retention
@@ -409,10 +499,10 @@ docker compose exec app ruff check app tests cli.py
 cd frontend && npm install && npm run dev   # UI dev server on :5173, proxies /api to :8001
 ```
 
-Tests use a fake embedder and a fake LLM, so they need neither the 2 GB model nor a model
-server.
+Tests use a fake embedder and fake LLMs (plain and tool-calling), and mock the clients' APIs,
+so they need neither the 2 GB model, a model server nor network access.
 
-## 15. Configuration reference
+## 16. Configuration reference
 
 `.env` holds bootstrap settings only. Everything else lives in the database and is edited in
 the UI.
@@ -436,7 +526,7 @@ the UI.
 | `COMPOSE_FILE` | unset | Set to `docker-compose.yml:docker-compose.gpu.yml` to give the containers the GPU |
 | `HTTPS_PUBLIC_DOMAIN` / `HTTPS_ADMIN_DOMAIN` | empty | Domains for the optional Caddy `https` profile |
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
