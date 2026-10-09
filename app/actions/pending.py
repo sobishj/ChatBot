@@ -116,6 +116,14 @@ def _partly_hidden(kind: str, value: str) -> str:
     return value
 
 
+_TOKEN_RE = re.compile(r"\[(phone|email)_\d+\]")
+
+
+def display_placeholders(text: str, vault: dict[str, str]) -> str:
+    """Replace placeholders in a reply with partly hidden values the visitor recognises."""
+    return _TOKEN_RE.sub(lambda m: _partly_hidden(m.group(1), vault[m.group(0)]) if m.group(0) in vault else m.group(0), text)
+
+
 def confirmation_summary(action: ClientAction, params: dict[str, Any]) -> str:
     """Plain-language summary written by the server (not the model) from the validated parameters."""
     kinds = {p["name"]: p.get("type", "string") for p in action.parameters or []}

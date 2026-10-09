@@ -479,3 +479,10 @@ def test_complete_with_tools_without_tools_is_plain_and_detects_unsupported(monk
     monkeypatch.setattr(litellm, "completion", reject)
     with pytest.raises(ToolsUnsupported):
         complete_with_tools(cfg, [{"role": "user", "content": "hi"}], TOOLS)
+
+
+def test_replies_show_placeholders_partly_hidden(db: Session, clinic, booking_api: BookingAPI) -> None:
+    tool_llm = FakeToolLLM(["We'll call you on [phone_1] and email [email_1]."])
+    result = ask(db, clinic, f"Call me on {PHONE} or mail sobish@example.com", tool_llm)
+    assert result.answer == "We'll call you on 98xxxxxx10 and email s***@example.com."
+    assert "[phone_1]" in tool_llm.calls[0]["messages"][-1]["content"]  # the model still only sees placeholders
