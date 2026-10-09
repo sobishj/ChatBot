@@ -389,3 +389,93 @@ def test_admin_crud_test_and_live_flag(db: Session, clinic, booking_api: Booking
     tool_llm = FakeToolLLM()
     ask(db, clinic, "Slots?", tool_llm)
     assert not tool_llm.calls
+
+
+# ----------------------------------------------------------------------------- template ↔ demo mock API
+def test_appointment_template_works_against_the_demo_mock_api(db: Session, embedder, make_client, ai_model, monkeypatch: pytest.MonkeyPatch) -> None:
+    from demo import mock_booking_api
+
+    mock = TestClient(mock_booking_api.app, base_url="http://host.docker.internal:8100")
+    monkeypatch.setattr(executor, "http_client", lambda timeout: mock)
+    set_setting(db, "mode", "onprem")  # the demo API is on a private address
+    client = make_client("hospital", "Demo Hospital")
+    update_settings(client, {"enabled": True, "base_url": "http://host.docker.internal:8100", "auth_name": "X-API-Key", "api_key": "demo-key"}, allow_private=True)
+    add_template(db, client)
+    db.commit()
+
+    tool_llm = FakeToolLLM([
+        [("list_departments", {})],
+        [("list_doctors", {"department_id": 1})],
+        [("get_slots", {"doctor_id": 1, "date": "2026-10-12"})],
+        "Dr. Anil Kumar is free at 09:00 and 09:30 on Monday.",
+    ])
+    first = ask(db, client, "I need a cardiologist on 12 October", tool_llm, session="demo-session-1")
+    assert [r["ok"] for r in first.action_results] == [True, True, True]
+    assert "Cardiology" in first.action_results[0]["response"] and "09:30" in first.action_results[2]["response"]
+
+    booking = {"doctor_id": 1, "date": "2026-10-12", "time": "09:30", "patient_name": "Sobish", "phone": "[phone_1]"}
+    tool_llm.script = [[("book_appointment", booking)], "Booked."]
+    assert ask(db, client, "Book 09:30 for Sobish, phone +91 98765 43210", tool_llm, session="demo-session-1").confirmation
+    done = ask(db, client, "yes", tool_llm, session="demo-session-1")
+    result = done.action_results[0]
+    assert result["ok"] and result["status_code"] == 201 and "BK-" in result["response"]
+
+    booking_id = json.loads(result["response"])["booking_id"]
+    tool_llm.script = [[("cancel_appointment", {"appointment_id": booking_id})], "Cancelled."]
+    ask(db, client, f"Cancel {booking_id}", tool_llm, session="demo-session-1")
+    cancelled = ask(db, client, "yes", tool_llm, session="demo-session-1")
+    assert cancelled.action_results[0]["ok"] and booking_id in cancelled.action_results[0]["response"]
+
+
+# ----------------------------------------------------------------------------- complete_with_tools (real LiteLLM objects)
+TOOLS = [{"type": "function", "function": {"name": "get_slots", "parameters": {"type": "object", "properties": {}}}}]
+
+
+def _mock_litellm(monkeypatch: pytest.MonkeyPatch, **mock: Any) -> list[dict[str, Any]]:
+    import litellm
+
+    seen: list[dict[str, Any]] = []
+    real = litellm.completion
+
+    def fake(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return real(**kwargs, **mock)
+
+    monkeypatch.setattr(litellm, "completion", fake)
+    return seen
+
+
+def test_complete_with_tools_parses_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm.client import ModelConfig, complete_with_tools
+
+    seen = _mock_litellm(monkeypatch, mock_tool_calls=[
+        {"id": "call_1", "type": "function", "function": {"name": "get_slots", "arguments": '{"doctor_id": 3, "date": "2026-10-10"}'}},
+        {"id": "call_2", "type": "function", "function": {"name": "get_slots", "arguments": "{not json"}},
+    ])
+    cfg = ModelConfig(provider="openai", model_name="gpt-4o-mini", api_key="sk-test")
+    result = complete_with_tools(cfg, [{"role": "user", "content": "slots?"}], TOOLS)
+    assert seen[0]["tools"] == TOOLS and seen[0]["tool_choice"] == "auto"
+    first, second = result.tool_calls
+    assert (first.id, first.name, first.arguments) == ("call_1", "get_slots", {"doctor_id": 3, "date": "2026-10-10"})
+    assert "_invalid_arguments" in second.arguments  # rejected later by parameter validation
+
+
+def test_complete_with_tools_without_tools_is_plain_and_detects_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+    import litellm
+
+    from app.llm.client import ModelConfig, ToolsUnsupported, complete_with_tools
+
+    seen = _mock_litellm(monkeypatch, mock_response="Plain answer.")
+    cfg = ModelConfig(provider="openai", model_name="gpt-4o-mini", api_key="sk-test")
+    result = complete_with_tools(cfg, [{"role": "user", "content": "hi"}], [])
+    assert result.text == "Plain answer." and result.tool_calls == [] and "tools" not in seen[0]
+
+    class UnsupportedParamsError(Exception):
+        pass
+
+    def reject(**kwargs: Any) -> Any:
+        raise UnsupportedParamsError("openai does not support parameters: ['tools']")
+
+    monkeypatch.setattr(litellm, "completion", reject)
+    with pytest.raises(ToolsUnsupported):
+        complete_with_tools(cfg, [{"role": "user", "content": "hi"}], TOOLS)
