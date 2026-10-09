@@ -71,7 +71,8 @@ def live_db() -> None:
 
 
 ALL_TABLES = (
-    "rate_limits, jobs, questions, chunks, documents, pages, user_clients, clients, ai_models, users, settings"
+    "rate_limits, jobs, action_calls, action_sessions, client_actions, questions, chunks, documents, pages, "
+    "user_clients, clients, ai_models, users, settings"
 )
 
 

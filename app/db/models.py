@@ -132,8 +132,70 @@ class Client(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_crawl_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now_column()
+    # API actions (off by default). Settings: {"base_url", "auth_type": header|bearer|query, "auth_name",
+    # "api_key_encrypted", "timeout_seconds", "extra_headers": {}, "health_path"}. The key never leaves the server.
+    api_actions_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    api_settings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
 
     ai_model: Mapped[AIModel | None] = relationship(lazy="joined")
+
+
+class ClientAction(Base):
+    """One call the assistant may make to a client's API (e.g. get_slots, book_appointment)."""
+
+    __tablename__ = "client_actions"
+    __table_args__ = (UniqueConstraint("client_id", "name", name="uq_client_actions_client_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)  # snake_case tool name
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")  # tells the model when to use it
+    method: Mapped[str] = mapped_column(String(10), nullable=False, default="GET")
+    path: Mapped[str] = mapped_column(Text, nullable=False)  # relative to base_url, may contain {placeholders}
+    # [{"name", "type", "description", "required", "location": path|query|body, "enum": [...]}]
+    parameters: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    requires_confirmation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    response_hint: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ActionCall(Base):
+    """Audit log of calls to client APIs. ``request_summary`` has personal data masked."""
+
+    __tablename__ = "action_calls"
+    __table_args__ = (Index("ix_action_calls_client_created", "client_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    question_id: Mapped[int | None] = mapped_column(ForeignKey("questions.id", ondelete="SET NULL"))
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel: Mapped[str] = mapped_column(String(10), nullable=False, default="widget")  # widget|test|admin
+    action_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    response_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = _now_column()
+
+
+class ActionSession(Base):
+    """Per-conversation action state, encrypted: personal-data placeholders and a pending confirmation."""
+
+    __tablename__ = "action_sessions"
+
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    vault_encrypted: Mapped[str | None] = mapped_column(Text)  # {"[phone_1]": "+9198..."}
+    pending_encrypted: Mapped[str | None] = mapped_column(Text)  # {"action", "params", "summary"}
+    pending_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 # --------------------------------------------------------------------------- content
@@ -224,6 +286,7 @@ class Question(Base):
     cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # USD estimate
     response_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+    actions_used: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     created_at: Mapped[datetime] = _now_column()
 
 
