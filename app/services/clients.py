@@ -244,6 +244,7 @@ def client_to_dict(client: Client, counts: dict[str, int] | None = None) -> dict
         "branding": branding(client),
         "crawl_settings": crawl_settings(client),
         "document_settings": document_settings(client),
+        "api_actions_enabled": client.api_actions_enabled,
         "pages": counts.get("pages", 0),
         "documents": counts.get("documents", 0),
         "chunks": counts.get("chunks", 0),

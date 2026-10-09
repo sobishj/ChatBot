@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app import __version__
 from app.admin.middleware import AdminSecurityMiddleware
-from app.admin.routes import auth, clients, dashboard, jobs, models, settings, setup, system, users
+from app.admin.routes import actions, auth, clients, dashboard, jobs, models, settings, setup, system, users
 from app.admin.spa import mount_spa
 from app.api.health import router as health_router
 from app.api.public import widget_js as public_widget_js
@@ -35,7 +35,7 @@ def create_admin_app() -> FastAPI:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
     app.include_router(health_router)
-    for module in (auth, setup, dashboard, clients, models, settings, jobs, users, system):
+    for module in (auth, setup, dashboard, clients, actions, models, settings, jobs, users, system):
         app.include_router(module.router)
 
     @app.get("/widget.js", include_in_schema=False)

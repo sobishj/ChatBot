@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import Select, and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Client, Question
+from app.db.models import ActionCall, ActionSession, Client, Question
 
 VISITOR_CHANNELS = ("widget",)  # Test chat and CLI questions are excluded from statistics
 
@@ -219,11 +219,18 @@ def export_csv(db: Session, client_id: int, **filters: Any) -> Iterator[str]:
 
 # ----------------------------------------------------------------------------- retention
 def apply_retention(db: Session, retention_days: int) -> int:
-    """Delete questions older than ``retention_days`` (0 = keep forever). Returns rows deleted."""
+    """Delete questions (and API action call logs) older than ``retention_days`` (0 = keep forever).
+
+    Returns the number of questions deleted. Per-conversation action state (encrypted
+    personal-data placeholders) is always dropped after a day, whatever the retention.
+    """
+    db.execute(delete(ActionSession).where(ActionSession.updated_at < datetime.now(UTC) - timedelta(days=1)))
+    db.commit()
     if retention_days <= 0:
         return 0
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     result = db.execute(delete(Question).where(Question.created_at < cutoff))
+    db.execute(delete(ActionCall).where(ActionCall.created_at < cutoff))
     db.commit()
     return result.rowcount or 0
 
