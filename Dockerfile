@@ -25,10 +25,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-16 \
     && rm -rf /var/lib/apt/lists/*
 
+# Tesseract OCR for scanned PDFs (pages without a text layer). OCR_LANGS picks the languages used.
+RUN apt-get update     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-mal tesseract-ocr-hin tesseract-ocr-ara     && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv
 
-# CPU-only PyTorch (much smaller than the default CUDA build).
-RUN pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+# PyTorch build: "cpu" (default, much smaller) or a CUDA build such as "cu124" for
+# NVIDIA GPUs (see docker-compose.gpu.yml). Settings → Compute device picks which one is used.
+ARG TORCH_VARIANT=cpu
+RUN pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/${TORCH_VARIANT}
 
 # Install dependencies first so code changes don't invalidate this layer.
 ARG INSTALL_DEV=false

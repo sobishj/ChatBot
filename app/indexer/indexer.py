@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -50,16 +52,28 @@ def ensure_schema(db: Session, embedder: Embedder) -> None:
         ensure_embedding_column(db, embedder.dim)
 
 
-def index_source(db: Session, embedder: Embedder, src: Source) -> int:
-    """(Re)build the chunks of one page or document; returns the number of chunks. Commits."""
+def index_source(
+    db: Session, embedder: Embedder, src: Source, progress: Callable[[int, int], None] | None = None
+) -> int:
+    """(Re)build the chunks of one page or document; returns the number of chunks. Commits.
+
+    ``progress(done, total)`` is called after each embedding batch; embedding dominates
+    indexing time, so large documents can report how far along they are.
+    """
     if (src.page_id is None) == (src.document_id is None):
         raise ValueError("Exactly one of page_id / document_id must be set")
     pieces = chunk_text(src.text, embedder.count_tokens)
     vectors: list[list[float]] = []
-    for start in range(0, len(pieces), EMBED_BATCH):
-        batch = pieces[start : start + EMBED_BATCH]
+    # Cloud embedders take bigger batches and send them as parallel requests.
+    batch_size = getattr(embedder, "index_batch", EMBED_BATCH)
+    started = time.perf_counter()
+    for start in range(0, len(pieces), batch_size):
+        batch = pieces[start : start + batch_size]
         # The title gives each chunk context ("ASICS" + "Second Floor").
         vectors.extend(embedder.encode([f"{src.title}\n{p}" if src.title else p for p in batch]))
+        if progress:
+            progress(len(vectors), len(pieces))
+    _record_speed(db, embedder, len(pieces), time.perf_counter() - started)
 
     owner_col, owner_id = ("page_id", src.page_id) if src.page_id is not None else ("document_id", src.document_id)
     db.execute(text(f"DELETE FROM chunks WHERE {owner_col} = :id"), {"id": owner_id})
@@ -88,6 +102,16 @@ def index_source(db: Session, embedder: Embedder, src: Source) -> int:
         )
     db.commit()
     return len(pieces)
+
+
+def _record_speed(db: Session, embedder: Embedder, chunks: int, seconds: float) -> None:
+    """Measured speed feeds the indexing-time estimates in the admin UI."""
+    from app.services.embeddings import record_rate
+
+    try:
+        record_rate(db, embedder.name, getattr(embedder, "device", "cpu"), chunks, seconds)
+    except Exception:  # noqa: BLE001 - statistics must never break indexing
+        logger.debug("Could not record embedding speed", exc_info=True)
 
 
 def delete_source_chunks(db: Session, page_id: int | None = None, document_id: int | None = None) -> None:

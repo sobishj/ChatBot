@@ -1,6 +1,7 @@
 # Website Assistant
 #   docker compose up -d                    -> db + app + worker
 #   docker compose --profile https up -d    -> also Caddy with automatic HTTPS
+#   GPU: see docker-compose.gpu.yml
 name: website-assistant
 
 # Shared settings for the app and worker (same image, different command).
@@ -10,6 +11,7 @@ x-app-common: &app-common
     context: .
     args:
       INSTALL_DEV: ${INSTALL_DEV:-false}
+      TORCH_VARIANT: ${TORCH_VARIANT:-cpu} # cu124 for NVIDIA GPUs (with docker-compose.gpu.yml)
   env_file: .env
   environment:
     DATA_DIR: /data

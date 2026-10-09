@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, type Job } from "../../api";
 import { JobProgress } from "../../components/JobProgress";
-import { Alert, Badge, Button, Card, Empty, Field, Loading, StatusBadge, useAction, useToast } from "../../components/ui";
+import { Alert, Badge, Button, Card, Empty, Field, Loading, Modal, StatusBadge, useAction, useToast } from "../../components/ui";
 import { Icon } from "../../components/icons";
-import { bytes, relative } from "../../format";
+import { approxTime, bytes, money, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
 interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; uploaded_at: string; indexed_at: string | null }
 interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null }; watched_root: string; mode: string }
+
+/** Returned instead of starting indexing when the local embedding model would take very long. */
+interface LargeUpload {
+  pages: number;
+  scanned: boolean;
+  files: { filename: string; pages: number; scanned: boolean }[];
+  current: { label: string; device: string; seconds: number; measured: boolean };
+  cloud: { key: string; label: string; seconds: number; usd: number | null; recommended: boolean }[];
+}
 
 const ACCEPT = ".pdf,.docx,.xlsx,.txt,.md";
 
@@ -16,6 +26,7 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
   const [jobId, setJobId] = useState<number | null>(client.active_jobs?.find((j) => j.type === "index_docs" || j.type === "scan_folder")?.id ?? null);
   const [over, setOver] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [large, setLarge] = useState<LargeUpload | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { busy, run } = useAction();
@@ -32,10 +43,11 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
     list.forEach((f) => form.append("files", f));
     setUploading(true);
     try {
-      const res = await api<{ saved: Doc[]; errors: string[]; job: Job | null }>(`/api/admin/clients/${client.client_id}/documents`, { form });
+      const res = await api<{ saved: Doc[]; errors: string[]; job: Job | null; large: LargeUpload | null }>(`/api/admin/clients/${client.client_id}/documents`, { form });
       res.errors.forEach((e) => toast(e, "error"));
-      if (res.saved.length) toast(`${res.saved.length} file(s) uploaded, indexing…`);
+      if (res.saved.length && !res.large) toast(`${res.saved.length} file(s) uploaded, indexing…`);
       if (res.job) setJobId(res.job.id);
+      if (res.large) setLarge(res.large);
       await load();
     } catch (e) {
       toast((e as Error).message, "error");
@@ -52,10 +64,12 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
   if (!data) return <Loading />;
   const uploads = data.documents.filter((d) => d.source === "upload");
   const folder = data.documents.filter((d) => d.source === "folder");
+  const waiting = uploads.filter((d) => d.status === "pending");
+  const indexPending = () => startJob(`/api/admin/clients/${client.client_id}/documents/index`);
 
   return (
     <div className="stack">
-      <Card title="Upload documents" subtitle="PDF, Word (DOCX), Excel (XLSX), text and Markdown, up to 50 MB each. Files are indexed automatically after upload.">
+      <Card title="Upload documents" subtitle="PDF, Word (DOCX), Excel (XLSX), text and Markdown, up to 1 GB each. Scanned PDFs are read with OCR. Files are indexed automatically after upload.">
         <div
           className={`dropzone ${over ? "over" : ""}`}
           role="button"
@@ -71,7 +85,26 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
           <input ref={fileInput} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { if (e.target.files) upload(e.target.files); e.target.value = ""; }} />
         </div>
         {jobId && <div style={{ marginTop: 14 }}><JobProgress jobId={jobId} onDone={() => { setJobId(null); load(); reload(); }} /></div>}
+        {!jobId && waiting.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <Alert kind="info">
+              <div className="row between">
+                <span>{waiting.length} uploaded file(s) are waiting to be indexed.</span>
+                <Button size="sm" kind="primary" loading={busy} onClick={indexPending}>Index now</Button>
+              </div>
+            </Alert>
+          </div>
+        )}
       </Card>
+
+      {large && (
+        <LargeUploadDialog
+          info={large}
+          isSuper={isSuper}
+          onClose={() => { setLarge(null); load(); }}
+          onIndexLocal={() => { setLarge(null); indexPending(); }}
+        />
+      )}
 
       <Card
         title={`Documents (${data.documents.length})`}
@@ -87,6 +120,56 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
         <WatchedFolder client={client} data={data} isSuper={isSuper} onChanged={(job) => { if (job) setJobId(job.id); load(); }} onScan={() => startJob(`/api/admin/clients/${client.client_id}/documents/scan`)} scanning={!!jobId} />
       )}
     </div>
+  );
+}
+
+function LargeUploadDialog({ info, isSuper, onClose, onIndexLocal }: { info: LargeUpload; isSuper: boolean; onClose: () => void; onIndexLocal: () => void }) {
+  const navigate = useNavigate();
+  const where = info.current.device === "cuda" ? "this server's GPU" : "this server's CPU";
+  return (
+    <Modal
+      title="Large upload: choose how to index it"
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <Button onClick={onClose}>Decide later</Button>
+          <span className="spacer" />
+          <Button onClick={onIndexLocal}>Index with {info.current.label} anyway</Button>
+          {isSuper && <Button kind="primary" onClick={() => navigate("/settings?tab=embeddings")}>Choose a cloud model…</Button>}
+        </>
+      }
+    >
+      <div className="stack">
+        <p style={{ margin: 0 }}>
+          This upload has about <strong>{num(info.pages)} pages</strong>{info.scanned ? " of scanned images, which are read with OCR first" : ""}.
+          With the current embedding model, <strong>{info.current.label}</strong> on {where}, indexing will take <strong>{approxTime(info.current.seconds)}</strong>
+          {info.current.measured ? " (based on the speed measured on this server)" : " (estimate)"}.
+        </p>
+        <div>
+          <strong>Cloud embedding models are much faster:</strong>
+          <div className="table-wrap" style={{ marginTop: 8 }}>
+            <table className="table">
+              <thead><tr><th>Model</th><th>Time for this upload</th><th className="num">Approx. cost</th></tr></thead>
+              <tbody>
+                {info.cloud.map((c) => (
+                  <tr key={c.key}>
+                    <td>{c.label} {c.recommended && <Badge color="green">Recommended</Badge>}</td>
+                    <td>{approxTime(c.seconds)}</td>
+                    <td className="num">{c.usd != null ? money(c.usd) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <Alert kind="info">
+          A cloud model sends document text (and later, visitor questions) to the provider, and switching re-indexes all existing content once.
+          {isSuper ? " Choosing one takes you to Settings → Embeddings; this upload is indexed automatically after the switch." : " Only a super admin can switch the embedding model (Settings → Embeddings)."}
+        </Alert>
+        <p className="small muted" style={{ margin: 0 }}>The files are saved either way. If you decide later, use <strong>Index now</strong> on this tab.</p>
+      </div>
+    </Modal>
   );
 }
 

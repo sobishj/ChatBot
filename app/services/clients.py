@@ -268,3 +268,35 @@ def public_config(client: Client, chat_notice: str, logo_url: str | None) -> dic
         "powered_by_text": b["powered_by_text"] if b["powered_by"] else "",
         "powered_by_url": b["powered_by_url"] if b["powered_by"] else "",
     }
+
+
+# ----------------------------------------------------------------------------- mode
+MODES = ("cloud", "onprem")
+
+
+def switch_mode(db: Session, mode: str) -> None:
+    """Switch between cloud (many clients) and on-premise (one client). Caller commits.
+
+    No client data changes. Going on-premise requires at most one client: the remaining
+    client becomes the on-premise assistant. Other clients are never deleted or hidden
+    implicitly; the admin has to remove them first.
+    """
+    from app.services.settings import get_setting, set_setting
+
+    if mode not in MODES:
+        raise ClientError("Mode must be cloud or onprem.")
+    if mode == get_setting(db, "mode"):
+        return
+    if mode == "cloud":
+        set_setting(db, "mode", "cloud")
+        set_setting(db, "onprem_client_id", None)
+        return
+    clients = list(db.scalars(select(Client).order_by(Client.id)))
+    if len(clients) > 1:
+        names = ", ".join(c.name for c in clients)
+        raise ClientError(
+            f"Single-client mode allows one client, but there are {len(clients)} ({names}). "
+            "Delete the clients you no longer need first."
+        )
+    set_setting(db, "mode", "onprem")
+    set_setting(db, "onprem_client_id", clients[0].id if clients else None)

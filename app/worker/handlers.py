@@ -46,10 +46,13 @@ def download_embedding(ctx: JobContext) -> dict[str, Any]:
         ctx.db.commit()
         raise
     ctx.progress(92, "Loading the model to verify it")
-    dim = load_for_download_check(name, path)
+    dim = load_for_download_check(name, path, get_setting(ctx.db, "compute_device"))
     ctx.log(f"Model loaded, vector size {dim}")
     recreated = ensure_embedding_column(ctx.db, dim)
-    update_setting_dict(ctx.db, "embedding", {"model": name, "dim": dim, "path": path, "status": "ready", "error": None, "pending_model": None})
+    update_setting_dict(ctx.db, "embedding", {
+        "backend": "local", "provider": "huggingface", "api_key_encrypted": None,
+        "model": name, "dim": dim, "path": path, "status": "ready", "error": None, "pending_model": None,
+    })
     ctx.db.commit()
 
     # Existing content must be re-embedded with the new model.
@@ -64,7 +67,8 @@ def download_embedding(ctx: JobContext) -> dict[str, Any]:
 
 def _previous_status(ctx: JobContext) -> str:
     embedding = get_setting(ctx.db, "embedding") or {}
-    return "ready" if embedding.get("path") and embedding.get("dim") else "error"
+    usable = embedding.get("path") or embedding.get("backend") == "api"
+    return "ready" if usable and embedding.get("dim") else "error"
 
 
 @handler("crawl")

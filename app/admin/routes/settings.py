@@ -7,13 +7,18 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.admin.deps import require_setup_completed, require_super_admin
 from app.admin.routes.setup import normalize_public_domain, start_embedding_job
-from app.db.models import Job, User
+from app.admin.routes.system import HEARTBEAT_STALE_SECONDS, _age_seconds
+from app.db.models import Client, Job, User
 from app.db.session import get_db
+from app.embeddings.model import COMPUTE_DEVICES
 from app.services import jobs as job_service
+from app.services.clients import ClientError, switch_mode
+from app.services.embeddings import EmbeddingChoiceError, embedding_view, options_view, switch_to_api
 from app.services.settings import DEFAULT_SYSTEM_PROMPT, DEFAULTS, get_settings_map, set_setting
 
 router = APIRouter(
@@ -31,15 +36,26 @@ EDITABLE = [
     "public_domain",
     "chat_notice",
     "retention_days",
+    "compute_device",
 ]
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 def _view(db: Session) -> dict[str, Any]:
-    values = get_settings_map(db, [*EDITABLE, "mode", "embedding"])
+    values = get_settings_map(db, [*EDITABLE, "mode", "embedding", "worker_heartbeat"])
+    values["clients"] = [{"client_id": c.client_id, "name": c.name} for c in db.scalars(select(Client).order_by(Client.id))]
+    heartbeat = values.pop("worker_heartbeat") or {}
+    age = _age_seconds(heartbeat)
+    # What the worker (where indexing runs) reported in its last heartbeat.
+    values["worker_hardware"] = {
+        "online": age is not None and age < HEARTBEAT_STALE_SECONDS,
+        "gpu": heartbeat.get("gpu"),
+        "device": heartbeat.get("device"),
+    }
     embedding = values.pop("embedding") or {}
     job = db.get(Job, embedding["job_id"]) if embedding.get("job_id") else None
-    values["embedding"] = {k: embedding.get(k) for k in ("model", "dim", "status", "error", "pending_model")}
+    values["embedding"] = embedding_view(db)
+    values["embedding_options"] = options_view(db)
     values["embedding_job"] = job_service.job_to_dict(job) if job else None
     values["default_system_prompt"] = DEFAULT_SYSTEM_PROMPT
     return values
@@ -93,6 +109,10 @@ def _validate(key: str, value: Any) -> Any:
         return normalize_public_domain(str(value))
     if key == "chat_notice":
         return str(value or "").strip()[:500]
+    if key == "compute_device":
+        if value not in COMPUTE_DEVICES:
+            raise bad("Compute device must be cpu or gpu.")
+        return value
     if key == "retention_days":
         v = int(value)
         if v < 0 or v > 3650:
@@ -127,12 +147,39 @@ def reset_prompt(db: Session = Depends(get_db)) -> dict[str, Any]:
     return _view(db)
 
 
+class ModeIn(BaseModel):
+    mode: str
+
+
+@router.post("/mode")
+def change_mode(body: ModeIn, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Switch between multi-client (cloud) and single-client (on-premise) mode."""
+    try:
+        switch_mode(db, body.mode)
+    except ClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return _view(db)
+
+
 class EmbeddingIn(BaseModel):
     model: str
+    backend: str = "local"  # "local" (download from Hugging Face) | "api" (cloud provider)
+    provider: str | None = None  # api only: openai | gemini | mistral
+    api_key: str | None = None  # api only; blank reuses the stored key or a saved AI model's key
 
 
 @router.post("/embedding")
 def change_embedding(body: EmbeddingIn, user: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Download (and switch to) another embedding model. Content is re-indexed automatically if the size changes."""
-    start_embedding_job(db, body.model.strip(), user.id)
+    """Switch the embedding model. Local models are downloaded first; cloud models are verified with one call.
+
+    All content is re-indexed with the new model automatically.
+    """
+    if body.backend == "api":
+        try:
+            switch_to_api(db, body.provider or "", body.model, body.api_key)
+        except EmbeddingChoiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        start_embedding_job(db, body.model.strip(), user.id)
     return _view(db)

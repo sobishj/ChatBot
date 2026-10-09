@@ -26,14 +26,21 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import Client, Document
-from app.documents.readers import SUPPORTED_EXTENSIONS, EmptyDocument, UnsupportedDocument, is_supported, read_document
+from app.documents.readers import (
+    SUPPORTED_EXTENSIONS,
+    EmptyDocument,
+    ReadCancelled,
+    UnsupportedDocument,
+    is_supported,
+    read_document,
+)
 from app.embeddings.model import Embedder
 from app.indexer.indexer import Source, ensure_schema, index_source
 from app.services.clients import client_data_dir, document_settings
 
 logger = logging.getLogger(__name__)
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_UPLOAD_BYTES = 1024 * 1024 * 1024  # scanned PDFs run to ~100-300 KB per page
 SOURCES = ("upload", "folder")
 
 
@@ -176,7 +183,8 @@ def sync_documents(
                 return stats
             rel = path.relative_to(root).as_posix() if root else path.name
             present.add(rel)
-            progress(i * 100 / max(len(files), 1), f"{source}: {i} of {len(files)} · {rel}")
+            label = f"{source}: {i} of {len(files)} · {rel}"
+            progress((i - 1) * 100 / max(len(files), 1), label)
             doc = rows.get(rel)
             if doc is None:
                 doc = Document(client_id=client.id, source=source, path=rel, filename=path.name, status="pending", chunk_count=0, size_bytes=0)
@@ -193,8 +201,14 @@ def sync_documents(
             if not force and doc.file_hash == digest and doc.status == "indexed":
                 stats["unchanged"] += 1
                 continue
+            def read_progress(read: int, total: int, i: int = i, n: int = len(files), label: str = label) -> None:
+                # Reading (incl. OCR) fills the first half of this file's share of the bar, embedding the second.
+                progress((i - 1 + read / max(total, 1) / 2) * 100 / n, f"{label} · read page {read} of {total}")
+
             try:
-                text = read_document(path)
+                text = read_document(path, read_progress, should_stop)
+            except ReadCancelled:
+                return stats
             except (UnsupportedDocument, EmptyDocument) as exc:
                 doc.file_hash = digest
                 _mark_error(db, doc, str(exc))
@@ -202,7 +216,16 @@ def sync_documents(
                 stats["errors"] += 1
                 continue
             db.commit()
-            count = index_source(db, embedder, Source(client.id, "doc", doc.filename, Path(doc.filename).stem, text, document_id=doc.id))
+
+            def chunk_progress(done: int, total: int, i: int = i, n: int = len(files), label: str = label) -> None:
+                progress((i - 0.5 + done / total / 2) * 100 / n, f"{label} · embedded {done} of {total} chunks")
+
+            count = index_source(
+                db,
+                embedder,
+                Source(client.id, "doc", doc.filename, Path(doc.filename).stem, text, document_id=doc.id),
+                progress=chunk_progress,
+            )
             doc.file_hash = digest
             doc.status = "indexed"
             doc.error = None

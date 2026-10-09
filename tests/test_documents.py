@@ -160,3 +160,37 @@ def test_watched_folder(db: Session, embedder, make_client, data_dirs: Path) -> 
         validate_watch_path("../")
     with pytest.raises(DocumentError):
         validate_watch_path("does-not-exist")
+
+
+def make_scanned_pdf(path: Path, page_texts: list[str]) -> None:
+    """An image-only PDF (no text layer), like a scanner produces."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.load_default(size=48)
+    pages = []
+    for text in page_texts:
+        img = Image.new("L", (2480, 3508), 255)  # A4 at 300 dpi
+        ImageDraw.Draw(img).text((200, 300), text, fill=0, font=font)
+        pages.append(img)
+    pages[0].save(path, save_all=True, append_images=pages[1:], resolution=300)
+
+
+@pytest.mark.skipif(not __import__("shutil").which("tesseract"), reason="tesseract not installed")
+def test_scanned_pdf_is_ocrd_in_page_order(tmp_path: Path) -> None:
+    f = tmp_path / "scan.pdf"
+    make_scanned_pdf(f, [f"Parking costs {n} rupees per hour" for n in (10, 20, 30, 40, 50)])
+    seen: list[tuple[int, int]] = []
+    text = read_document(f, progress=lambda done, total: seen.append((done, total)))
+    positions = [text.index(f"Parking costs {n} rupees") for n in (10, 20, 30, 40, 50)]
+    assert positions == sorted(positions)
+    assert "[Page 5]" in text
+    assert seen[-1] == (5, 5)
+
+
+def test_scanned_pdf_reading_can_be_cancelled(tmp_path: Path) -> None:
+    from app.documents.readers import ReadCancelled
+
+    f = tmp_path / "scan.pdf"
+    make_scanned_pdf(f, ["Page one", "Page two"])
+    with pytest.raises(ReadCancelled):
+        read_document(f, should_stop=lambda: True)

@@ -44,3 +44,13 @@ export function bytes(value: number): string {
 export function duration(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
+
+/** Rough human duration for estimates: "under a minute", "about 12 minutes", "about 2.5 hours". */
+export function approxTime(seconds: number): string {
+  if (seconds < 60) return "under a minute";
+  if (seconds < 90) return "about a minute";
+  if (seconds < 3600) return `about ${Math.round(seconds / 60)} minutes`;
+  const hours = seconds / 3600;
+  if (hours < 48) return `about ${hours < 10 ? hours.toFixed(1).replace(/\.0$/, "") : Math.round(hours)} hours`;
+  return `about ${Math.round(hours / 24)} days`;
+}

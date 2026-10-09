@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import text
 
 from app.db.session import new_session, session_scope
+from app.embeddings.model import current_device, gpu_info
 from app.services import jobs as job_service
 from app.services.jobs import JobCancelled, JobContext
 from app.services.settings import set_setting
@@ -97,7 +98,9 @@ class Worker:
         while not self._stop.is_set():
             try:
                 with session_scope() as db:
-                    set_setting(db, "worker_heartbeat", {"at": db.execute(text("SELECT now()")).scalar().isoformat()})
+                    now_ = db.execute(text("SELECT now()")).scalar().isoformat()
+                    # The GPU status is shown in Settings: the worker is where indexing runs.
+                    set_setting(db, "worker_heartbeat", {"at": now_, "gpu": gpu_info(), "device": current_device()})
                     # Keep running jobs alive for the stale-job detector.
                     db.execute(text("UPDATE jobs SET heartbeat_at = now() WHERE status = 'running'"))
             except Exception:  # noqa: BLE001

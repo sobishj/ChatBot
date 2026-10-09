@@ -29,8 +29,8 @@ PROVIDERS: dict[str, Provider] = {
     p.key: p
     for p in [
         Provider("openai", "OpenAI (GPT)", "openai", "https://api.openai.com/v1", True, True, "gpt-4o-mini"),
-        Provider("anthropic", "Anthropic (Claude)", "anthropic", "https://api.anthropic.com", True, True, "claude-sonnet-5-5"),
-        Provider("gemini", "Google (Gemini)", "gemini", "https://generativelanguage.googleapis.com", True, True, "gemini-2.0-flash"),
+        Provider("anthropic", "Anthropic (Claude)", "anthropic", "https://api.anthropic.com", True, True, "claude-haiku-5-5"),
+        Provider("gemini", "Google (Gemini)", "gemini", "https://generativelanguage.googleapis.com", True, True, "gemini-3.5-flash"),
         Provider("moonshot", "Moonshot (Kimi)", "openai", "https://api.moonshot.ai/v1", True, True, "kimi-k2-0905-preview", True),
         Provider("deepseek", "DeepSeek", "deepseek", "https://api.deepseek.com", True, True, "deepseek-chat"),
         Provider("mistral", "Mistral", "mistral", "https://api.mistral.ai/v1", True, True, "mistral-small-latest"),

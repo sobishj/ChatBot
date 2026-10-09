@@ -28,6 +28,7 @@ from app.documents.service import (
     delete_document,
     document_to_dict,
     save_upload,
+    uploads_dir,
     validate_watch_path,
 )
 from app.services import jobs as job_service
@@ -45,7 +46,8 @@ from app.services.clients import (
     validate_branding,
     validate_crawl_settings,
 )
-from app.services.settings import get_setting, get_settings_map
+from app.services.embeddings import large_upload_warning
+from app.services.settings import get_setting, get_settings_map, set_setting
 from app.services.users import accessible_client_ids
 
 router = APIRouter(prefix="/api/admin/clients", tags=["clients"], dependencies=[Depends(require_setup_completed)])
@@ -116,6 +118,8 @@ def add_client(body: ClientIn, user: User = Depends(require_super_admin), db: Se
     if get_setting(db, "mode") == "onprem" and db.scalar(select(func.count(Client.id))):
         raise HTTPException(status_code=400, detail="On-premise mode supports a single client.")
     client = create_client(db, body.client_id, body.name, body.website_url, body.allowed_domains)
+    if get_setting(db, "mode") == "onprem":
+        set_setting(db, "onprem_client_id", client.id)  # the first client becomes the assistant
     db.commit()
     return {"client": _detail(db, client, user)}
 
@@ -270,8 +274,20 @@ def upload_documents(
             saved.append(document_to_dict(doc))
         except DocumentError as exc:
             errors.append(f"{upload.filename}: {exc}")
-    job = job_service.enqueue(db, "index_docs", client.id, payload={"sources": ["upload"]}, created_by_id=user.id) if saved else None
-    return {"saved": saved, "errors": errors, "job": job_service.job_to_dict(job) if job else None}
+    # A local model can need hours for very large uploads: hold them and let the admin decide
+    # (index anyway, or switch to a much faster cloud model, which re-indexes everything).
+    large = large_upload_warning(db, [uploads_dir(client) / d["path"] for d in saved]) if saved else None
+    job = None
+    if saved and large is None:
+        job = job_service.enqueue(db, "index_docs", client.id, payload={"sources": ["upload"]}, created_by_id=user.id)
+    return {"saved": saved, "errors": errors, "job": job_service.job_to_dict(job) if job else None, "large": large}
+
+
+@router.post("/{client_id}/documents/index")
+def index_pending_documents(client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Index documents that are waiting (new or changed); unchanged ones are skipped."""
+    job = job_service.enqueue(db, "index_docs", client.id, payload={"sources": ["upload"]}, created_by_id=user.id)
+    return {"job": job_service.job_to_dict(job)}
 
 
 @router.delete("/{client_id}/documents/{document_id}")

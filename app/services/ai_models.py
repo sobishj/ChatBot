@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AIModel, Client
-from app.llm.client import LLMError, LLMResult, ModelConfig, test_connection
+from app.llm.client import LLMError, LLMResult, ModelConfig, list_available_models, test_connection
 from app.llm.providers import PROVIDERS, get_provider, is_loopback_url
 from app.security.crypto import decrypt_secret, encrypt_secret, mask_secret
 from app.services.settings import get_setting, set_setting
@@ -127,6 +127,24 @@ def run_test(cfg: ModelConfig) -> dict[str, Any]:
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
     }
+
+
+def discover_models(data: dict[str, Any], existing: AIModel | None = None) -> dict[str, Any]:
+    """List the models the form's provider/URL/key can use; the model name may still be empty."""
+    provider = str(data.get("provider") or (existing.provider if existing else "") or "")
+    try:
+        get_provider(provider)
+    except ValueError as exc:
+        raise ModelError(str(exc)) from exc
+    base_url = str(data.get("base_url") or "").strip() or None
+    api_key = (data.get("api_key") or "").strip() or None
+    if api_key is None and existing is not None and existing.api_key_encrypted:
+        api_key = decrypt_secret(existing.api_key_encrypted)
+    try:
+        models = list_available_models(provider, base_url, api_key, use_cache=not data.get("refresh"))
+        return {"ok": True, "models": models}
+    except LLMError as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def model_to_dict(model: AIModel, default_id: int | None = None, fallback_id: int | None = None) -> dict[str, Any]:

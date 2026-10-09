@@ -97,6 +97,52 @@ docker compose up -d --build
 > **Never change or lose `SECRET_KEY`** after setup. It encrypts the saved AI provider API
 > keys. Keep a copy of `.env` somewhere safe.
 
+### GPU acceleration (optional)
+
+Indexing time is almost all embedding. On a CPU, bge-m3 needs roughly 1–2 seconds per PDF
+page (a 1,000-page PDF takes about 15 minutes on an 8-core server); an NVIDIA GPU is
+typically 20–50× faster. By default the image is built for CPU only. To use a GPU:
+
+1. Install the NVIDIA driver and the
+   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+   on the host. `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` must work.
+2. In `.env` set:
+   ```
+   TORCH_VARIANT=cu124
+   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+   ```
+   (On Windows, separate the two files with `;` instead of `:`.)
+3. `docker compose up -d --build` (the CUDA image is a few GB larger).
+4. In **Settings → Compute device** choose **GPU**. The page shows the GPU the worker detected
+   and what is in use. No restart or re-index is needed, and switching back to CPU works the same way.
+
+If GPU is selected but no GPU is available, the app keeps working on the CPU and the page shows a warning.
+
+### Embedding models: local or cloud
+
+**Settings → Embeddings** lists the available models with their languages, the time for
+1,000 pages on this server (measured once something has been indexed) and, for cloud models,
+the cost:
+
+| Model | Where | Notes |
+|---|---|---|
+| `BAAI/bge-m3` (default) | Local | Best local quality, 100+ languages; slow without a GPU |
+| `intfloat/multilingual-e5-small` | Local | ~10× faster on a CPU, ~100 languages, somewhat weaker search |
+| `BAAI/bge-small-en-v1.5` | Local | Fast, English only |
+| OpenAI `text-embedding-3-small` | Cloud | Thousands of pages in a minute or two, ~$0.02 per 1M tokens |
+| OpenAI `text-embedding-3-large` | Cloud | Most accurate OpenAI model |
+| Google `gemini-embedding-001` | Cloud | Strong multilingual quality, free tier with rate limits |
+| Mistral `mistral-embed` | Cloud | Inexpensive, best for European languages |
+
+Cloud models need an API key (leave it blank to reuse the key of a saved AI model from the same
+provider) and send document text and visitor questions to the provider. Switching models
+re-indexes all content once.
+
+When an upload would take a local model more than about 10 minutes, it isn't indexed right
+away: the Documents tab shows the estimate next to each cloud model's time and cost, and the
+admin chooses to index locally anyway or switch to a cloud model. Files from watched folders
+are always indexed with the current model.
+
 ## 3. Setup wizard
 
 Open `http://<server>:8001/setup`. The wizard is available only until setup is completed.
@@ -162,8 +208,10 @@ They re-crawl every active client and re-check their documents.
 
 ## 6. Documents: upload and watched folders
 
-Supported formats: **PDF, DOCX, XLSX, TXT, MD**, up to 50 MB each. Scanned, image-only PDFs
-have no text and are reported as errors (OCR isn't supported yet).
+Supported formats: **PDF, DOCX, XLSX, TXT, MD**, up to 1 GB each. PDF pages without a text
+layer (scans) are read with Tesseract OCR, several pages in parallel (one per CPU core by default).
+Set the OCR languages with `OCR_LANGS` (installed: `eng`, `mal`, `hin`, `ara`, e.g. `eng+mal`);
+each extra language slows OCR down. Pages that already contain text skip OCR entirely.
 
 **Upload** (default): drag files into the Documents tab. They're stored on the server in
 `DATA_DIR/clients/<client_id>/documents/` and indexed automatically.
@@ -199,8 +247,8 @@ models without restarting anything.
 | Provider | Base URL (pre-filled) | Example model |
 |---|---|---|
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| Anthropic (Claude) | `https://api.anthropic.com` | `claude-sonnet-5-5` |
-| Google (Gemini) | `https://generativelanguage.googleapis.com` | `gemini-2.0-flash` |
+| Anthropic (Claude) | `https://api.anthropic.com` | `claude-haiku-5-5` (fast) or `claude-sonnet-5-5` |
+| Google (Gemini) | `https://generativelanguage.googleapis.com` | `gemini-3.5-flash` |
 | Moonshot (Kimi) | `https://api.moonshot.ai/v1` | `kimi-k2-0905-preview` |
 | DeepSeek / Mistral / Groq / OpenRouter | pre-filled | see the provider's docs |
 | **Bionic**, Ollama, vLLM, LM Studio, other OpenAI-compatible | `http://host.docker.internal:<port>/v1` | e.g. `qwen2.5-7b-instruct` |
@@ -265,7 +313,10 @@ least one active super admin.
 
 ## 10. Cloud vs on-premise
 
-The code is the same in both modes; you choose the mode in the setup wizard.
+The code is the same in both modes. You choose the mode in the setup wizard and can change it
+later in **Settings → Clients mode**. Switching keeps all content, settings, users and statistics.
+Switching to on-premise needs at most one client (delete the others first, nothing is deleted
+automatically); that client becomes the assistant.
 
 | | Cloud | On-premise |
 |---|---|---|
@@ -337,7 +388,7 @@ app/
   crawler/      robots/sitemaps/link crawler, text extraction, crawl service
   db/           SQLAlchemy models, Alembic migrations (run automatically at startup)
   documents/    PDF/DOCX/XLSX/TXT/MD readers, uploads, watched folders
-  embeddings/   bge-m3 download (with progress) and loading
+  embeddings/   local models (download with progress, loading), cloud embedding APIs, model catalog
   indexer/      chunking (~500 tokens, 50 overlap), embedding, vector column management
   llm/          LiteLLM wrapper and provider presets
   search/       hybrid search (pgvector + full-text, RRF)
@@ -377,7 +428,12 @@ the UI.
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxies whose `X-Forwarded-*` headers are trusted |
 | `WATCHED_HOST_DIR` | `./watched` | Host folder mounted read-only at `/mnt/watched` |
 | `LOG_LEVEL` | `INFO` | |
+| `OCR_LANGS` | `eng` | Tesseract languages for scanned PDFs, joined with `+` |
+| `OCR_WORKERS` | `0` | Pages OCR'd in parallel (0 = one per CPU core) |
+| `OCR_DPI` | `200` | Resolution scans are read at; 300 for very small print (about 40% slower) |
 | `INSTALL_DEV` | `false` | Include test tools in the image |
+| `TORCH_VARIANT` | `cpu` | PyTorch build: `cpu` or `cu124` for NVIDIA GPUs (see [GPU acceleration](#gpu-acceleration-optional)) |
+| `COMPOSE_FILE` | unset | Set to `docker-compose.yml:docker-compose.gpu.yml` to give the containers the GPU |
 | `HTTPS_PUBLIC_DOMAIN` / `HTTPS_ADMIN_DOMAIN` | empty | Domains for the optional Caddy `https` profile |
 
 ## 16. Troubleshooting

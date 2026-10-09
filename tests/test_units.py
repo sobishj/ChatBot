@@ -250,3 +250,134 @@ def test_crawl_due_weekly_and_off() -> None:
 )
 def test_parse_answer_detects_untagged_no_answer(reply: str, flagged: bool) -> None:
     assert parse_answer(reply)[1] is flagged
+
+
+# ----------------------------------------------------------------------------- LLM options
+@pytest.mark.parametrize(
+    "provider, model, expected",
+    [
+        ("gemini", "gemini-3.5-flash", {"thinkingConfig": {"thinkingLevel": "minimal"}}),
+        ("gemini", "gemini-3.5-flash-lite", {"thinkingConfig": {"thinkingLevel": "minimal"}}),
+        ("gemini", "gemini-3.1-pro-preview", {"thinkingConfig": {"thinkingLevel": "low"}}),
+        ("gemini", "gemini-2.5-flash", {"thinkingConfig": {"thinkingBudget": 0}}),
+        ("gemini", "gemini-2.0-flash", {}),
+        ("gemini", "gemini-flash-latest", {}),
+        ("openai", "gpt-4o-mini", {}),
+    ],
+)
+def test_fast_thinking_for_gemini(provider: str, model: str, expected: dict) -> None:
+    from app.llm.client import ModelConfig, _fast_thinking
+
+    assert _fast_thinking(ModelConfig(provider=provider, model_name=model)) == expected
+
+
+@pytest.mark.parametrize(
+    "model, no_sampling, effort",
+    [
+        ("claude-haiku-5-5", True, True),
+        ("claude-sonnet-5-5", True, True),
+        ("claude-opus-5-5", True, True),
+        ("claude-fable-5-1", True, True),
+        ("claude-opus-4-8", True, True),
+        ("claude-opus-4-6", False, True),
+        ("claude-sonnet-4-6", False, True),
+        ("claude-haiku-4-5", False, False),
+        ("claude-haiku-4-5-20251001", False, False),
+        ("claude-sonnet-4-20250514", False, False),
+    ],
+)
+def test_claude_options(model: str, no_sampling: bool, effort: bool) -> None:
+    from app.llm.client import ModelConfig, _claude_options
+
+    options = _claude_options(ModelConfig(provider="anthropic", model_name=model))
+    assert options.get("_no_sampling", False) is no_sampling
+    assert ("output_config" in options) is effort
+    assert _claude_options(ModelConfig(provider="openai", model_name=model)) == {}
+
+
+def test_complete_omits_temperature_for_current_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    import litellm
+
+    from app.llm.client import ModelConfig, complete
+
+    sent: dict = {}
+
+    def fake_completion(**kwargs):
+        sent.update(kwargs)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    with pytest.raises(Exception):  # noqa: B017 - only the request arguments matter here
+        complete(ModelConfig(provider="anthropic", model_name="claude-haiku-5-5", api_key="k"), [{"role": "user", "content": "hi"}])
+    assert "temperature" not in sent and sent["output_config"] == {"effort": "low"} and "_no_sampling" not in sent
+    with pytest.raises(Exception):  # noqa: B017
+        complete(ModelConfig(provider="openai", model_name="gpt-4o-mini", api_key="k"), [{"role": "user", "content": "hi"}])
+    assert sent["temperature"] == 0.2
+
+
+# ----------------------------------------------------------------------------- model discovery
+def _fake_get(calls: list[dict], payload: dict, status: int = 200):
+    import httpx
+
+    def fake_get(self, url, params=None, headers=None, timeout=None):
+        calls.append({"url": url, "params": params, "headers": headers})
+        return httpx.Response(status, json=payload, request=httpx.Request("GET", url))
+
+    return fake_get
+
+
+@pytest.fixture(autouse=True)
+def _empty_model_list_cache() -> None:
+    from app.llm import client
+
+    client._model_list_cache.clear()
+
+
+def test_list_models_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.llm.client import list_available_models
+
+    calls: list[dict] = []
+    monkeypatch.setattr(httpx.Client, "get", _fake_get(calls, {"data": [{"id": "claude-sonnet-5-5"}, {"id": "claude-haiku-5-5"}]}))
+    assert list_available_models("anthropic", "https://api.anthropic.com", "sk-ant-x") == ["claude-haiku-5-5", "claude-sonnet-5-5"]
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/models"
+    assert calls[0]["headers"]["x-api-key"] == "sk-ant-x"
+    # Repeat lookups come from the cache; refresh bypasses it.
+    list_available_models("anthropic", "https://api.anthropic.com", "sk-ant-x")
+    assert len(calls) == 1
+    list_available_models("anthropic", "https://api.anthropic.com", "sk-ant-x", use_cache=False)
+    assert len(calls) == 2
+
+
+def test_list_models_gemini_keeps_chat_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.llm.client import list_available_models
+
+    models = [
+        {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+    ]
+    calls: list[dict] = []
+    monkeypatch.setattr(httpx.Client, "get", _fake_get(calls, {"models": models}))
+    assert list_available_models("gemini", None, "key") == ["gemini-3.5-flash"]
+    assert calls[0]["url"].endswith("/v1beta/models")
+
+
+def test_list_models_openai_compatible_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.llm.client import LLMError, list_available_models
+
+    calls: list[dict] = []
+    monkeypatch.setattr(httpx.Client, "get", _fake_get(calls, {"data": [{"id": "qwen2.5:7b"}]}))
+    assert list_available_models("ollama", "http://host.docker.internal:11434/v1/", None) == ["qwen2.5:7b"]
+    assert calls[0]["url"] == "http://host.docker.internal:11434/v1/models"
+    assert calls[0]["headers"] == {}
+
+    monkeypatch.setattr(httpx.Client, "get", _fake_get([], {"error": "bad key"}, status=401))
+    with pytest.raises(LLMError, match="API key"):
+        list_available_models("openai", None, "sk-bad")
+    with pytest.raises(LLMError, match="API key first"):
+        list_available_models("openai", None, None)

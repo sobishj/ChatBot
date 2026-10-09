@@ -16,6 +16,7 @@ from app.services.ai_models import (
     ModelError,
     config_from_form,
     delete_model,
+    discover_models,
     list_models,
     model_to_dict,
     record_test,
@@ -96,6 +97,16 @@ def test_unsaved(body: TestIn, db: Session = Depends(get_db)) -> dict[str, Any]:
     except (ModelError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return run_test(cfg)
+
+
+@router.post("/discover")
+def discover(body: TestIn, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """List the models the form's provider, base URL and API key can use."""
+    existing = _get(db, body.model_id) if body.model_id else None
+    try:
+        return discover_models(body.config, existing)
+    except ModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{model_id}/test")

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type AIModel, type Client, type Job, type Provider, type User } from "../api";
 import { useAuth } from "../auth";
 import { JobProgress } from "../components/JobProgress";
-import { emptyModel, ModelForm, modelToValues, payload, type ModelValues, type TestResult } from "../components/ModelForm";
+import { emptyModel, ModelForm, modelToValues, payload, type DiscoverResult, type ModelValues, type TestResult } from "../components/ModelForm";
 import { Alert, Button, Field, Loading } from "../components/ui";
 import { Icon } from "../components/icons";
 
@@ -142,7 +142,7 @@ function ModeStep({ value, busy, onSubmit }: { value: string; busy: boolean; onS
   const [mode, setMode] = useState(value || "cloud");
   return (
     <div className="stack">
-      <div><h1>How will this server be used?</h1><p className="muted">This only changes the admin UI and warnings; you can't switch later without reinstalling.</p></div>
+      <div><h1>How will this server be used?</h1><p className="muted">This only changes the admin UI and warnings. You can change it later in Settings → Clients mode.</p></div>
       <div className="grid grid-2">
         <button type="button" className={`choice ${mode === "cloud" ? "selected" : ""}`} onClick={() => setMode("cloud")} aria-pressed={mode === "cloud"}>
           <h3>Cloud (multi-client)</h3>
@@ -207,7 +207,8 @@ function ModelStep({ state, onBack, onSaved }: { state: SetupState; onBack: () =
     <div className="stack">
       <div><h1>Add your first AI model</h1><p className="muted">Any provider works: a hosted API or a local server like Bionic, Ollama or vLLM. The connection test must succeed before you continue. You can add more models later.</p></div>
       {error && <Alert kind="error">{error}</Alert>}
-      <ModelForm values={values} onChange={(v) => { setValues(v); setTest(null); }} providers={state.providers} mode={state.mode} editing={!!state.model} hasStoredKey={state.model?.has_api_key} onTest={runTest} testResult={test} testing={testing} />
+      <ModelForm values={values} onChange={(v) => { setValues(v); setTest(null); }} providers={state.providers} mode={state.mode} editing={!!state.model} hasStoredKey={state.model?.has_api_key} onTest={runTest} testResult={test} testing={testing}
+        onDiscover={(refresh) => api<DiscoverResult>("/api/admin/setup/model/discover", { body: { ...payload(values), refresh } })} />
       <div className="row between">
         <Button onClick={onBack}>Back</Button>
         <Button kind="primary" onClick={save} loading={saving} disabled={!test?.ok}>Save and continue</Button>

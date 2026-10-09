@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.embeddings.model import Embedder
+from app.embeddings.model import Embedder, encode_queries
 from app.indexer.indexer import vector_literal
 
 VECTOR_K = 20
@@ -131,7 +131,7 @@ def rrf_merge(lists: list[list[SearchHit]], k: int = RRF_K, limit: int = FINAL_K
 
 
 def search(db: Session, embedder: Embedder, client_id: int, question: str, limit: int = FINAL_K) -> SearchResult:
-    query_vector = embedder.encode([question])[0]
+    query_vector = encode_queries(embedder, [question])[0]
     vector_hits = _vector_search(db, client_id, query_vector, VECTOR_K)
     text_hits = _text_search(db, client_id, question, TEXT_K)
     db.commit()  # end the transaction holding SET LOCAL

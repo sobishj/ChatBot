@@ -19,8 +19,9 @@ from app.db.session import get_db
 from app.llm.providers import PROVIDERS
 from app.security.sessions import issue_session
 from app.services import jobs as job_service
-from app.services.ai_models import ModelError, config_from_form, model_to_dict, record_test, run_test, save_model
+from app.services.ai_models import ModelError, config_from_form, discover_models, model_to_dict, record_test, run_test, save_model
 from app.services.clients import ClientError, client_to_dict, create_client
+from app.services.embeddings import embedding_view, model_identity
 from app.services.settings import get_setting, get_settings_map, set_setting, update_setting_dict
 from app.services.users import UserError, count_users, create_user, user_to_dict
 
@@ -137,6 +138,17 @@ def test_model(body: dict[str, Any], _: User = Depends(require_super_admin), db:
     return run_test(cfg)
 
 
+@router.post("/model/discover")
+def discover_model_names(body: dict[str, Any], _: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
+    _ensure_not_completed(db)
+    existing_id = get_setting(db, "default_model_id")
+    existing = db.get(AIModel, existing_id) if existing_id else None
+    try:
+        return discover_models(body, existing)
+    except ModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/model")
 def save_first_model(body: dict[str, Any], _: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Save the first model, but only after a successful live connection test."""
@@ -179,15 +191,17 @@ def start_embedding_job(db: Session, model_name: str, user_id: int | None) -> di
     if not re.match(r"^[\w.-]+/[\w.-]+$", model_name):
         raise HTTPException(status_code=400, detail="Enter a Hugging Face model id like BAAI/bge-m3.")
     current = get_setting(db, "embedding") or {}
-    if current.get("status") == "ready" and current.get("model") == model_name:
-        return {"embedding": current, "job": None}
-    previous = current.get("model") if current.get("status") == "ready" else None
+    is_local = (current.get("backend") or "local") == "local"
+    if current.get("status") == "ready" and is_local and current.get("model") == model_name:
+        return {"embedding": embedding_view(db), "job": None}
+    # Cloud models are named provider/model, so switching back to a local model always re-indexes.
+    previous = model_identity(current) if current.get("status") == "ready" else None
     job = job_service.enqueue(
         db, "download_embedding", payload={"model": model_name, "previous_model": previous}, created_by_id=user_id
     )
-    merged = update_setting_dict(db, "embedding", {"status": "downloading", "error": None, "job_id": job.id, "pending_model": model_name})
+    update_setting_dict(db, "embedding", {"status": "downloading", "error": None, "job_id": job.id, "pending_model": model_name})
     db.commit()
-    return {"embedding": merged, "job": job_service.job_to_dict(job)}
+    return {"embedding": embedding_view(db), "job": job_service.job_to_dict(job)}
 
 
 @router.post("/embedding/continue")

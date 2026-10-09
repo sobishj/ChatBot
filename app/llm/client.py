@@ -7,6 +7,7 @@ switching models never needs a restart or code change.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -75,7 +76,66 @@ def _litellm_kwargs(cfg: ModelConfig) -> dict[str, Any]:
             kwargs["api_base"] = base_url
     # OpenAI-compatible local servers usually ignore the key, but the client library requires one.
     kwargs["api_key"] = cfg.api_key or ("not-needed" if provider.openai_compatible else None)
+    kwargs.update(_fast_thinking(cfg))
+    kwargs.update(_claude_options(cfg))
     return kwargs
+
+
+_CLAUDE_VERSION_RE = re.compile(r"claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)")
+
+
+def _claude_options(cfg: ModelConfig) -> dict[str, Any]:
+    """Settings for current Claude models (sampling and effort).
+
+    Claude Opus 4.7+, Sonnet 5+, Haiku 5+ and Fable/Mythos reject non-default sampling
+    parameters, so ``temperature`` is left out (:func:`complete` drops it when this
+    returns ``_no_sampling``). Chat answers are short and grounded in the retrieved
+    context, so low effort gives faster replies without worse answers.
+    """
+    if cfg.provider != "anthropic":
+        return {}
+    match = _CLAUDE_VERSION_RE.search(cfg.model_name.lower())
+    if not match:
+        return {}
+    family, major, minor = match.group(1), int(match.group(2)), int(match.group(3) or 0)
+    version = major + minor / 10
+    no_sampling = (
+        family in ("fable", "mythos")
+        or (family == "opus" and version >= 4.7)
+        or (family in ("sonnet", "haiku") and version >= 5)
+    )
+    effort = no_sampling or (family in ("opus", "sonnet") and version >= 4.6)
+    options: dict[str, Any] = {}
+    if no_sampling:
+        options["_no_sampling"] = True
+    if effort:
+        options["output_config"] = {"effort": "low"}
+    return options
+
+
+_GEMINI_VERSION_RE = re.compile(r"gemini-(\d+(?:\.\d+)?)")
+
+
+def _fast_thinking(cfg: ModelConfig) -> dict[str, Any]:
+    """Keep Gemini's hidden "thinking" to a minimum.
+
+    Answers are short and grounded in the retrieved context, so deep reasoning adds
+    latency (about 1 s per answer) and cost without better answers. Thinking tokens
+    also count against max_tokens, which can cut answers short.
+    """
+    if cfg.provider != "gemini":
+        return {}
+    match = _GEMINI_VERSION_RE.search(cfg.model_name.lower())
+    if not match:
+        return {}
+    version = float(match.group(1))
+    flash = "flash" in cfg.model_name.lower()
+    if version >= 3:
+        # Gemini 3+ can't switch thinking off; Flash models support "minimal", Pro models "low".
+        return {"thinkingConfig": {"thinkingLevel": "minimal" if flash else "low"}}
+    if version >= 2.5 and flash:
+        return {"thinkingConfig": {"thinkingBudget": 0}}  # 2.5 Flash can switch thinking off
+    return {}
 
 
 def estimate_cost(cfg: ModelConfig, input_tokens: int, output_tokens: int, response: Any = None) -> float:
@@ -99,15 +159,17 @@ def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int |
     litellm.telemetry = False
     litellm.suppress_debug_info = True
 
+    kwargs = _litellm_kwargs(cfg)
+    if not kwargs.pop("_no_sampling", False):
+        kwargs["temperature"] = cfg.temperature
     started = time.perf_counter()
     try:
         response = litellm.completion(
             messages=messages,
-            temperature=cfg.temperature,
             max_tokens=max_tokens or cfg.max_tokens,
             timeout=cfg.timeout_seconds,
             num_retries=0,
-            **_litellm_kwargs(cfg),
+            **kwargs,
         )
     except Exception as exc:  # noqa: BLE001 - LiteLLM raises many exception types
         raise LLMError(_friendly_error(exc)) from exc
@@ -142,6 +204,85 @@ def test_connection(cfg: ModelConfig) -> LLMResult:
         ],
         max_tokens=60,
     )
+
+
+_MODEL_LIST_TTL = 600  # seconds; model lists rarely change, and the form refetches on every key edit
+_model_list_cache: dict[str, tuple[float, list[str]]] = {}
+_http_client: Any = None
+
+
+def _http() -> Any:
+    """One shared client so repeated lookups reuse the open (keep-alive) connection."""
+    global _http_client
+    if _http_client is None:
+        import httpx
+
+        # Retries cover brief connection failures (DNS hiccups, a container network still starting up).
+        _http_client = httpx.Client(transport=httpx.HTTPTransport(retries=2))
+    return _http_client
+
+
+def list_available_models(
+    provider_key: str, base_url: str | None, api_key: str | None, timeout: float = 15, use_cache: bool = True
+) -> list[str]:
+    """Ask the provider which chat models this API key can use (each provider's ``/models`` endpoint)."""
+    import hashlib
+
+    provider = get_provider(provider_key)
+    base = (base_url or provider.default_base_url or "").strip().rstrip("/")
+    if not base:
+        raise LLMError("Enter the base URL first.")
+    if provider.needs_api_key and not api_key:
+        raise LLMError("Enter the API key first.")
+    cache_key = hashlib.sha256(f"{provider_key}\n{base}\n{api_key or ''}".encode()).hexdigest()
+    cached = _model_list_cache.get(cache_key)
+    if use_cache and cached and time.monotonic() - cached[0] < _MODEL_LIST_TTL:
+        return cached[1]
+    names = _fetch_model_list(provider_key, base, api_key, timeout)
+    _model_list_cache[cache_key] = (time.monotonic(), names)
+    return names
+
+
+def _fetch_model_list(provider_key: str, base: str, api_key: str | None, timeout: float) -> list[str]:
+    import httpx
+
+    http = _http()
+    try:
+        if provider_key == "anthropic":
+            url = base if base.endswith("/v1") else f"{base}/v1"
+            resp = http.get(f"{url}/models", params={"limit": 1000}, timeout=timeout,
+                            headers={"x-api-key": api_key or "", "anthropic-version": "2023-06-01"})
+            resp.raise_for_status()
+            names = [m["id"] for m in resp.json().get("data", [])]
+        elif provider_key == "gemini":
+            url = base if base.endswith(("/v1", "/v1beta")) else f"{base}/v1beta"
+            resp = http.get(f"{url}/models", params={"pageSize": 1000}, timeout=timeout, headers={"x-goog-api-key": api_key or ""})
+            resp.raise_for_status()
+            names = [
+                m["name"].removeprefix("models/")
+                for m in resp.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            ]
+        else:  # OpenAI and OpenAI-compatible servers (incl. Ollama, vLLM, LM Studio)
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            resp = http.get(f"{base}/models", timeout=timeout, headers=headers)
+            resp.raise_for_status()
+            names = [m["id"] for m in resp.json().get("data", [])]
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (401, 403):
+            raise LLMError(f"Authentication failed: check the API key. (HTTP {code})") from exc
+        if code == 404:
+            raise LLMError("This server has no model list at that URL: check the base URL, or type the model name manually.") from exc
+        raise LLMError(f"The provider returned HTTP {code}.") from exc
+    except httpx.HTTPError as exc:
+        raise LLMError(
+            "Could not connect: check the base URL and that the server is running "
+            f"(inside Docker use host.docker.internal instead of localhost). ({exc.__class__.__name__}: {str(exc)[:200]})"
+        ) from exc
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LLMError("The provider returned an unexpected model list.") from exc
+    return sorted(set(names))
 
 
 def _friendly_error(exc: Exception) -> str:

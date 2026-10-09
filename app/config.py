@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     watched_dir: Path = Field(default=Path("/mnt/watched"), description="Root of watched document folders")
     forwarded_allow_ips: str = Field(default="127.0.0.1", description="Trusted proxy IPs for X-Forwarded-*")
     log_level: str = Field(default="INFO")
+    ocr_langs: str = Field(default="eng", description="Tesseract languages for scanned PDFs, e.g. eng+mal (more is slower)")
+    ocr_workers: int = Field(default=0, ge=0, description="Pages OCR'd in parallel; 0 = one per CPU core")
+    ocr_dpi: int = Field(default=200, ge=100, le=600, description="Scan render resolution; 300 reads tiny print better but is slower")
 
 
 @lru_cache

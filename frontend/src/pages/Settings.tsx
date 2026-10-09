@@ -4,11 +4,29 @@ import { useSearchParams } from "react-router-dom";
 import { api, type AIModel, type Job, type Provider } from "../api";
 import { JobProgress } from "../components/JobProgress";
 import { PageHead } from "../components/Layout";
-import { emptyModel, ModelForm, modelToValues, payload, type ModelValues, type TestResult } from "../components/ModelForm";
+import { emptyModel, ModelForm, modelToValues, payload, type DiscoverResult, type ModelValues, type TestResult } from "../components/ModelForm";
 import { Alert, Badge, Button, Card, Empty, Field, Loading, Modal, Tabs, useAction } from "../components/ui";
-import { relative } from "../format";
+import { approxTime, money, relative } from "../format";
+import { useAuth } from "../auth";
 
-type Tab = "models" | "answers" | "crawling" | "limits" | "domain" | "privacy" | "embeddings";
+type Tab = "models" | "answers" | "crawling" | "limits" | "domain" | "privacy" | "embeddings" | "compute" | "mode";
+
+interface EmbeddingOption {
+  key: string;
+  backend: "local" | "api";
+  provider: string;
+  provider_label: string;
+  model: string;
+  label: string;
+  dim: number;
+  languages: string;
+  summary: string;
+  recommended: boolean;
+  seconds_per_1000_pages: number;
+  measured: boolean;
+  usd_per_1000_pages: number | null;
+  saved_key_available: boolean;
+}
 
 interface SettingsData {
   system_prompt: string;
@@ -20,9 +38,16 @@ interface SettingsData {
   public_domain: string;
   chat_notice: string;
   retention_days: number;
-  mode: string;
-  embedding: { model: string; dim: number | null; status: string; error: string | null; pending_model: string | null };
+  mode: "cloud" | "onprem";
+  clients: { client_id: string; name: string }[];
+  embedding: {
+    model: string; dim: number | null; status: string; error: string | null; pending_model: string | null;
+    backend: "local" | "api"; provider: string; has_api_key: boolean;
+  };
+  embedding_options: EmbeddingOption[];
   embedding_job: Job | null;
+  compute_device: "cpu" | "gpu";
+  worker_hardware: { online: boolean; gpu: { name: string; memory_gb: number; cuda: string } | null; device: "cpu" | "cuda" | "api" | null };
 }
 
 export function Settings() {
@@ -42,6 +67,8 @@ export function Settings() {
     { key: "domain", label: "Public domain" },
     { key: "privacy", label: "Privacy" },
     { key: "embeddings", label: "Embeddings" },
+    { key: "compute", label: "Compute device" },
+    { key: "mode", label: "Clients mode" },
   ];
 
   return (
@@ -56,6 +83,8 @@ export function Settings() {
           {tab === "domain" && <DomainTab data={data} onSaved={setData} />}
           {tab === "privacy" && <PrivacyTab data={data} onSaved={setData} />}
           {tab === "embeddings" && <EmbeddingsTab data={data} reload={load} />}
+          {tab === "compute" && <ComputeTab data={data} onSaved={setData} />}
+          {tab === "mode" && <ModeTab data={data} onSaved={setData} />}
         </>
       )}
     </div>
@@ -199,7 +228,8 @@ function ModelEditor({ model, providers, mode, onClose, onSaved }: { model: AIMo
     >
       <div className="stack">
         {error && <Alert kind="error">{error}</Alert>}
-        <ModelForm values={values} onChange={(v) => { setValues(v); setTest(null); }} providers={providers} mode={mode} editing={!!model} hasStoredKey={model?.has_api_key} onTest={runTest} testResult={test} testing={testing} />
+        <ModelForm values={values} onChange={(v) => { setValues(v); setTest(null); }} providers={providers} mode={mode} editing={!!model} hasStoredKey={model?.has_api_key} onTest={runTest} testResult={test} testing={testing}
+          onDiscover={(refresh) => api<DiscoverResult>("/api/admin/models/discover", { body: { model_id: model?.id ?? null, config: { ...payload(values), refresh } } })} />
       </div>
     </Modal>
   );
@@ -296,7 +326,7 @@ function DomainTab({ data, onSaved }: { data: SettingsData; onSaved: (d: Setting
         <Field label="Domain" htmlFor="pd" hint="e.g. chat.example.com: no http:// and no path. Point its DNS at this server and enable HTTPS (see README).">
           <input id="pd" className="input" value={domain} onChange={(e) => setDomain(e.target.value)} />
         </Field>
-        <Alert kind="info">Mode: <strong>{data.mode === "onprem" ? "On-premise (single client)" : "Cloud (multi-client)"}</strong>. The mode is chosen during setup.</Alert>
+        <Alert kind="info">Mode: <strong>{data.mode === "onprem" ? "On-premise (single client)" : "Cloud (multi-client)"}</strong>. Change it in the Clients mode tab.</Alert>
         <div className="row end"><Button kind="primary" loading={busy} onClick={() => save({ public_domain: domain })}>Save</Button></div>
       </div>
     </Card>
@@ -321,31 +351,200 @@ function PrivacyTab({ data, onSaved }: { data: SettingsData; onSaved: (d: Settin
 
 // ---------------------------------------------------------------- embeddings
 function EmbeddingsTab({ data, reload }: { data: SettingsData; reload: () => void }) {
-  const [model, setModel] = useState(data.embedding.pending_model || data.embedding.model);
+  const current = data.embedding;
+  const options = data.embedding_options;
+  const currentKey = `${current.backend}:${current.provider}:${current.model}`;
+  const known = options.some((o) => o.key === currentKey);
+  const [selected, setSelected] = useState<string>(known ? currentKey : "custom");
+  const [customModel, setCustomModel] = useState(known ? "" : current.pending_model || current.model);
+  const [apiKey, setApiKey] = useState("");
   const [confirm, setConfirm] = useState(false);
   const { busy, run } = useAction();
-  const downloading = data.embedding.status === "downloading";
-  const changing = model.trim() !== data.embedding.model;
+  const downloading = current.status === "downloading";
+  const option = options.find((o) => o.key === selected);
+  const isCloud = option?.backend === "api";
+  const target = option ? option.key : `local:huggingface:${customModel.trim()}`;
+  const changing = target !== currentKey || (isCloud && apiKey.trim() !== "");
+  const keepsKey = isCloud && current.backend === "api" && current.provider === option?.provider && current.has_api_key;
+  const label = (key: string) => options.find((o) => o.key === key)?.label ?? key.split(":").slice(2).join(":");
+  const choose = (key: string) => { setSelected(key); setConfirm(false); setApiKey(""); };
+
+  const submit = () => run(async () => {
+    const body = option
+      ? { backend: option.backend, provider: option.provider, model: option.model, api_key: isCloud ? apiKey : null }
+      : { backend: "local", model: customModel.trim() };
+    await api("/api/admin/settings/embedding", { body });
+    setConfirm(false);
+    setApiKey("");
+    reload();
+  }, isCloud ? "Switched: all content is being re-indexed" : "Download started");
+
+  const row = (o: EmbeddingOption) => (
+    <tr key={o.key} className={selected === o.key ? "selected" : ""} onClick={() => !downloading && choose(o.key)} style={{ cursor: downloading ? "default" : "pointer" }}>
+      <td style={{ width: 28 }}><input type="radio" name="emb" checked={selected === o.key} onChange={() => choose(o.key)} disabled={downloading} aria-label={o.label} /></td>
+      <td>
+        <strong>{o.label}</strong> {o.recommended && <Badge color="green">Recommended</Badge>} {o.key === currentKey && <Badge color="blue">Current</Badge>}
+        <div className="small muted mono">{o.model}</div>
+        <div className="small muted">{o.summary}</div>
+      </td>
+      <td className="small">{o.languages}</td>
+      <td className="small nowrap">{approxTime(o.seconds_per_1000_pages)}<div className="muted">{o.measured ? "measured here" : "estimate"}</div></td>
+      {o.backend === "api" && <td className="small nowrap num">{o.usd_per_1000_pages != null ? money(o.usd_per_1000_pages) : "—"}</td>}
+    </tr>
+  );
+
   return (
-    <Card title="Embedding model" subtitle="Converts content and questions into vectors for semantic search.">
-      <div className="stack">
-        <dl className="kv">
-          <dt>Current model</dt><dd className="mono">{data.embedding.model}</dd>
-          <dt>Status</dt><dd><Badge color={data.embedding.status === "ready" ? "green" : downloading ? "blue" : "red"}>{data.embedding.status}</Badge></dd>
-          <dt>Vector size</dt><dd>{data.embedding.dim ?? "—"}</dd>
-        </dl>
-        {data.embedding.error && <Alert kind="error">{data.embedding.error}</Alert>}
-        {downloading && data.embedding_job && <JobProgress jobId={data.embedding_job.id} onDone={reload} />}
-        <Field label="Hugging Face model id" htmlFor="emb" hint="Multilingual models such as BAAI/bge-m3 or intfloat/multilingual-e5-large work well.">
-          <input id="emb" className="input mono" value={model} onChange={(e) => { setModel(e.target.value); setConfirm(false); }} disabled={downloading} />
-        </Field>
-        {changing && <Alert kind="warning">Switching the embedding model re-indexes every client's pages and documents. Search quality may change while that runs.</Alert>}
-        <div className="row end">
-          {data.embedding.status !== "ready" && !changing && !downloading && <Button kind="primary" loading={busy} onClick={() => run(async () => { await api("/api/admin/settings/embedding", { body: { model } }); reload(); })}>Download</Button>}
-          {changing && !downloading && (confirm
-            ? <Button kind="danger" loading={busy} onClick={() => run(async () => { await api("/api/admin/settings/embedding", { body: { model } }); reload(); }, "Download started")}>Yes, switch and re-index</Button>
-            : <Button kind="primary" onClick={() => setConfirm(true)}>Switch model…</Button>)}
+    <div className="stack">
+      <Card title="Embedding model" subtitle="Turns content and questions into vectors for semantic search. Embedding is most of the time it takes to index documents.">
+        <div className="stack">
+          <dl className="kv">
+            <dt>Current model</dt><dd>{label(currentKey)} <Badge color={current.backend === "api" ? "amber" : undefined}>{current.backend === "api" ? "Cloud" : "Local"}</Badge></dd>
+            <dt>Status</dt><dd><Badge color={current.status === "ready" ? "green" : downloading ? "blue" : "red"}>{current.status}</Badge></dd>
+            <dt>Vector size</dt><dd>{current.dim ?? "—"}</dd>
+          </dl>
+          {current.error && <Alert kind="error">{current.error}</Alert>}
+          {downloading && data.embedding_job && <JobProgress jobId={data.embedding_job.id} onDone={reload} />}
         </div>
+      </Card>
+
+      <Card title="Local models" subtitle="Run on this server: your content never leaves it. Speed depends on the server's CPU/GPU (see Compute device)." bodyless>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th /><th>Model</th><th>Languages</th><th>Time for 1,000 pages</th></tr></thead>
+            <tbody>
+              {options.filter((o) => o.backend === "local").map(row)}
+              <tr className={selected === "custom" ? "selected" : ""}>
+                <td><input type="radio" name="emb" checked={selected === "custom"} onChange={() => choose("custom")} disabled={downloading} aria-label="Other Hugging Face model" /></td>
+                <td colSpan={3}>
+                  <strong>Other Hugging Face model</strong>
+                  <input className="input mono" style={{ marginTop: 6, maxWidth: 420 }} value={customModel} placeholder="organisation/model-name" aria-label="Hugging Face model id"
+                    onFocus={() => choose("custom")} onChange={(e) => { setCustomModel(e.target.value); setConfirm(false); }} disabled={downloading} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card title="Cloud models" subtitle="Run at the provider: thousands of pages in minutes. Document text and visitor questions are sent to the provider." bodyless>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th /><th>Model</th><th>Languages</th><th>Time for 1,000 pages</th><th className="num">Cost for 1,000 pages</th></tr></thead>
+            <tbody>{options.filter((o) => o.backend === "api").map(row)}</tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="stack">
+          {isCloud && (
+            <Field label={`${option!.provider_label} API key`} htmlFor="emb-key"
+              hint={keepsKey ? "Leave blank to keep the saved key." : option!.saved_key_available ? `Leave blank to use the key of your saved ${option!.provider_label} AI model.` : "Stored encrypted; never shown again."}>
+              <input id="emb-key" className="input" type="password" autoComplete="new-password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setConfirm(false); }}
+                placeholder={keepsKey || option!.saved_key_available ? "••••••••" : ""} />
+            </Field>
+          )}
+          {isCloud && changing && data.mode === "onprem" && (
+            <Alert kind="warning">This server is in on-premise mode. A cloud model sends document text and visitor questions to {option!.provider_label}, outside this server.</Alert>
+          )}
+          {changing && (
+            <Alert kind="warning">
+              Switching to <strong>{option ? option.label : customModel.trim() || "this model"}</strong> re-indexes every client's pages and documents{isCloud ? "" : " after the download"}.
+              Search answers are incomplete until that finishes, so switch at a quiet time.
+            </Alert>
+          )}
+          <div className="row end">
+            {!changing && current.status !== "ready" && !downloading && !isCloud && (
+              <Button kind="primary" loading={busy} onClick={submit}>Download</Button>
+            )}
+            {changing && !downloading && (confirm
+              ? <Button kind="danger" loading={busy} onClick={submit}>Yes, switch and re-index</Button>
+              : <Button kind="primary" disabled={!option && !customModel.trim()} onClick={() => setConfirm(true)}>{isCloud ? "Verify key and switch…" : "Download and switch…"}</Button>)}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- compute device
+function ComputeTab({ data, onSaved }: { data: SettingsData; onSaved: (d: SettingsData) => void }) {
+  const [device, setDevice] = useState(data.compute_device);
+  const { busy, save } = useSave(onSaved);
+  const hw = data.worker_hardware;
+  const choice = (value: SettingsData["compute_device"], title: string, text: string) => (
+    <button type="button" className={`choice ${device === value ? "selected" : ""}`} onClick={() => setDevice(value)} aria-pressed={device === value}>
+      <h3>{title}</h3>
+      <p className="muted small">{text}</p>
+    </button>
+  );
+  const inUse = hw.device === "cuda" ? "GPU" : hw.device === "cpu" ? "CPU" : hw.device === "api" ? "Cloud embedding model (this setting doesn't apply)" : null;
+  return (
+    <Card title="Compute device" subtitle="Where the embedding model runs. Embedding is most of the indexing time, so this decides how fast documents and pages are indexed.">
+      <div className="stack">
+        <div className="grid grid-2">
+          {choice("cpu", "CPU only", "Works on any server. Large documents index slowly: roughly 1–2 seconds per page with bge-m3.")}
+          {choice("gpu", "GPU (NVIDIA)", "Typically 20–50× faster. Needs an NVIDIA GPU and the GPU build of this app (see the README, \"GPU acceleration\").")}
+        </div>
+        <dl className="kv">
+          <dt>GPU on the worker</dt>
+          <dd>
+            {!hw.online ? <Badge color="amber">Worker offline</Badge>
+              : hw.gpu ? <Badge color="green">{hw.gpu.name} · {hw.gpu.memory_gb} GB · CUDA {hw.gpu.cuda}</Badge>
+              : <Badge>None detected</Badge>}
+          </dd>
+          <dt>In use now</dt>
+          <dd>{inUse ?? <span className="muted">Model not loaded yet (loads with the next indexing job)</span>}</dd>
+        </dl>
+        {device === "gpu" && hw.online && !hw.gpu && (
+          <Alert kind="warning">
+            The worker sees no GPU, so indexing keeps running on the CPU. Install the NVIDIA Container Toolkit, set <code>TORCH_VARIANT=cu124</code> and
+            start with the GPU compose file (README, "GPU acceleration"). This setting then takes effect without further changes.
+          </Alert>
+        )}
+        <p className="hint">Changes apply from the next indexing job and the next chat question; no restart or re-index is needed.</p>
+        <div className="row end"><Button kind="primary" loading={busy} disabled={device === data.compute_device} onClick={() => save({ compute_device: device })}>Save</Button></div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------- clients mode
+function ModeTab({ data, onSaved }: { data: SettingsData; onSaved: (d: SettingsData) => void }) {
+  const [mode, setMode] = useState(data.mode);
+  const { refresh } = useAuth();
+  const { busy, run } = useAction();
+  const tooMany = mode === "onprem" && data.clients.length > 1;
+  const choice = (value: SettingsData["mode"], title: string, text: string) => (
+    <button type="button" className={`choice ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)} aria-pressed={mode === value}>
+      <h3>{title}</h3>
+      <p className="muted small">{text}</p>
+    </button>
+  );
+  const save = () => run(async () => {
+    onSaved(await api<SettingsData>("/api/admin/settings/mode", { body: { mode } }));
+    await refresh(); // navigation (Clients vs Assistant) depends on the mode
+  }, "Mode changed");
+  return (
+    <Card title="Clients mode" subtitle="How many businesses this server hosts. Switching keeps all content, settings, users and statistics.">
+      <div className="stack">
+        <div className="grid grid-2">
+          {choice("cloud", "Multiple clients (cloud)", "Host assistants for many businesses. Clients → Add client is available; each client has its own content, branding and stats.")}
+          {choice("onprem", "Single client (on-premise)", "One assistant for one business, usually on its own server. The menu opens that assistant directly.")}
+        </div>
+        {tooMany && (
+          <Alert kind="warning">
+            Single-client mode allows one client, but there are {data.clients.length}: {data.clients.map((c) => c.name).join(", ")}.
+            Delete the ones you no longer need (client → Overview → Danger zone) first. Nothing is deleted automatically.
+          </Alert>
+        )}
+        {mode === "onprem" && data.clients.length === 1 && data.mode !== "onprem" && (
+          <Alert kind="info"><strong>{data.clients[0].name}</strong> becomes the single assistant.</Alert>
+        )}
+        {mode === "onprem" && data.clients.length === 0 && data.mode !== "onprem" && (
+          <Alert kind="info">The first client you add becomes the assistant.</Alert>
+        )}
+        <div className="row end"><Button kind="primary" loading={busy} disabled={mode === data.mode || tooMany} onClick={save}>Save</Button></div>
       </div>
     </Card>
   );

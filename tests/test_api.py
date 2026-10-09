@@ -205,3 +205,31 @@ def test_spa_and_security_headers(db: Session) -> None:
     assert r.status_code in (200, 503)  # index.html (or "not built" page in dev)
     assert r.headers["x-frame-options"] == "DENY" and "default-src 'self'" in r.headers["content-security-policy"]
     assert api.get("/api/admin/unknown").status_code == 404
+
+
+def test_switch_between_single_and_multi_client_mode(db: Session, embedder, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = admin_client()
+    finish_setup(db, root, monkeypatch)
+    switch = lambda mode: root.post("/api/admin/settings/mode", json={"mode": mode})  # noqa: E731
+
+    # Single-client mode with no client yet: the first client becomes the assistant.
+    assert switch("onprem").status_code == 200
+    root.post("/api/admin/clients", json={"client_id": "client-a", "name": "Client A", "website_url": "https://a.test"})
+    assert root.get("/api/admin/auth/me").json()["onprem_client_id"] == "client-a"
+    blocked = root.post("/api/admin/clients", json={"client_id": "client-b", "name": "Client B"})
+    assert blocked.status_code == 400
+    assert root.delete("/api/admin/clients/client-a").status_code == 400  # the assistant can't be deleted
+
+    # Multi-client mode: adding clients works again, nothing was lost.
+    assert switch("cloud").json()["mode"] == "cloud"
+    assert root.get("/api/admin/auth/me").json()["onprem_client_id"] is None
+    assert root.post("/api/admin/clients", json={"client_id": "client-b", "name": "Client B"}).status_code == 200
+
+    # Back to single-client is refused while two clients exist, and allowed with one.
+    refused = switch("onprem")
+    assert refused.status_code == 400 and "Client A" in refused.json()["detail"]
+    assert root.get("/api/admin/settings").json()["mode"] == "cloud"
+    assert root.delete("/api/admin/clients/client-b").status_code == 200
+    assert switch("onprem").json()["mode"] == "onprem"
+    assert root.get("/api/admin/auth/me").json()["onprem_client_id"] == "client-a"
+    assert switch("sideways").status_code == 400

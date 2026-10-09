@@ -109,6 +109,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
 .btn.sm { height: 30px; padding: 0 10px; font-size: 13px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
 .btn svg { width: 16px; height: 16px; }
 .icon-btn { width: 34px; padding: 0; }
 
