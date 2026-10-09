@@ -466,13 +466,16 @@ def update_domains(
 class TestChatIn(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=1000)
+    confirm: bool | None = None
 
 
 @router.post("/{client_id}/test-chat")
 def test_chat(body: TestChatIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Chat exactly like a visitor (same pipeline), with diagnostics. Logged with channel 'test'."""
-    result = answer_question(db, client, body.session_id, body.message, channel="test")
+    result = answer_question(db, client, body.session_id, body.message, channel="test", confirm=body.confirm)
     return {
+        "confirmation": result.confirmation,
+        "action_results": result.action_results,
         "answer": result.answer,
         "sources": result.sources,
         "answered": result.answered,

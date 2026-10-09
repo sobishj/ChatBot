@@ -20,7 +20,7 @@ from app.chat.pii import mask_pii
 from app.chat.prompt import build_messages, parse_answer
 from app.db.models import Client, Question
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
-from app.llm.client import LLMError, LLMResult, ModelConfig, complete
+from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, complete, complete_with_tools
 from app.search.hybrid import SearchHit, search, words
 from app.services.ai_models import resolve_for_client
 from app.services.clients import branding
@@ -52,6 +52,11 @@ class ChatResponse:
     question_id: int | None = None
     error: str | None = None
     hits: list[SearchHit] = field(default_factory=list)
+    # API actions only (see app.actions): a change waiting for the visitor's confirmation,
+    # what ran (Test chat diagnostics) and the action names (logged with the question).
+    confirmation: dict[str, str] | None = None
+    action_results: list[dict[str, Any]] = field(default_factory=list)
+    actions_used: list[str] = field(default_factory=list)
 
 
 def normalize_question(text: str) -> str:
@@ -112,8 +117,18 @@ def answer_question(
     message: str,
     channel: str = "widget",
     embedder: Embedder | None = None,
-    llm: Callable[..., LLMResult] = complete,
+    confirm: bool | None = None,
+    tool_llm: Callable[..., ToolResult] = complete_with_tools,
+    llm: Callable[..., LLMResult] = complete,  # keep last: tests replace the final default
 ) -> ChatResponse:
+    """``confirm`` is the widget's Confirm (True) / Cancel (False) button for a pending API action."""
+    if client.api_actions_enabled:
+        from app.actions.flow import answer_with_actions, enabled_actions
+
+        actions = enabled_actions(db, client)
+        if actions:
+            return answer_with_actions(db, client, session_id, message, channel, actions, embedder, llm, tool_llm, confirm)
+
     started = time.perf_counter()
     question = mask_pii(message.strip())[:MAX_MESSAGE_CHARS]
     b = branding(client)
@@ -150,6 +165,14 @@ def answer_question(
         model_id = None
 
     response.response_ms = int((time.perf_counter() - started) * 1000)
+    save_question(db, client, session_id, channel, question, language, response, model_id)
+    return response
+
+
+def save_question(
+    db: Session, client: Client, session_id: str, channel: str, question: str, language: str | None, response: ChatResponse, model_id: int | None
+) -> Question:
+    """Log the (already masked) question and its answer; sets ``response.question_id``. Commits."""
     row = Question(
         client_id=client.id,
         session_id=session_id[:64],
@@ -169,8 +192,9 @@ def answer_question(
         cost=response.cost,
         response_ms=response.response_ms,
         error=response.error,
+        actions_used=response.actions_used,
     )
     db.add(row)
     db.commit()
     response.question_id = row.id
-    return response
+    return row

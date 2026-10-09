@@ -57,7 +57,13 @@ DEFAULTS: dict[str, Any] = {
     "crawl_schedule": {"frequency": "daily", "time": "03:00", "weekday": 0},  # weekday 0 = Monday
     "timezone": "UTC",  # IANA name used for the crawl schedule, e.g. Asia/Kolkata
     # Rate limits (requests per minute)
-    "rate_limits": {"chat_per_ip_per_minute": 20, "chat_per_client_per_minute": 300, "login_per_ip_per_15min": 10},
+    "rate_limits": {
+        "chat_per_ip_per_minute": 20,
+        "chat_per_client_per_minute": 300,
+        "login_per_ip_per_15min": 10,
+        "action_calls_per_session_per_hour": 20,  # API actions: every call to a client's API
+        "confirmed_actions_per_session_per_day": 3,  # API actions: confirmed changes such as bookings
+    },
     # Privacy
     "chat_notice": DEFAULT_CHAT_NOTICE,
     "retention_days": 365,  # 0 = keep forever

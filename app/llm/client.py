@@ -6,10 +6,11 @@ switching models never needs a restart or code change.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.db.models import AIModel
@@ -191,6 +192,96 @@ def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int |
         cost=estimate_cost(cfg, input_tokens, output_tokens, response),
         model_id=cfg.model_id,
         model_name=cfg.display_name or cfg.model_name,
+    )
+
+
+# ----------------------------------------------------------------------------- tool calling
+class ToolsUnsupported(LLMError):
+    """The provider or model rejected tool definitions; callers fall back to a plain answer."""
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+    raw_arguments: str
+
+
+@dataclass
+class ToolResult(LLMResult):
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+
+def _parse_tool_calls(message: Any) -> list[ToolCall]:
+    calls: list[ToolCall] = []
+    for i, call in enumerate(getattr(message, "tool_calls", None) or []):
+        function = getattr(call, "function", None)
+        name = getattr(function, "name", None)
+        if not name:
+            continue
+        raw = getattr(function, "arguments", None) or "{}"
+        try:
+            args = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (ValueError, TypeError):
+            args = {"_invalid_arguments": str(raw)[:200]}  # rejected by validation, reported to the model
+        if not isinstance(args, dict):
+            args = {"_invalid_arguments": str(raw)[:200]}
+        calls.append(ToolCall(id=getattr(call, "id", None) or f"call_{i}", name=name, arguments=args, raw_arguments=raw if isinstance(raw, str) else json.dumps(raw)))
+    return calls
+
+
+def complete_with_tools(
+    cfg: ModelConfig, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, max_tokens: int | None = None
+) -> ToolResult:
+    """Like :func:`complete`, but the model may answer with tool calls instead of text.
+
+    With no ``tools`` it is a plain completion over a conversation that may contain earlier
+    tool calls and results. Raises :class:`ToolsUnsupported` when the model can't use tools.
+    """
+    import litellm
+
+    litellm.telemetry = False
+    litellm.suppress_debug_info = True
+
+    kwargs = _litellm_kwargs(cfg)
+    if not kwargs.pop("_no_sampling", False):
+        kwargs["temperature"] = cfg.temperature
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+    started = time.perf_counter()
+    try:
+        response = litellm.completion(
+            messages=messages,
+            max_tokens=max_tokens or cfg.max_tokens,
+            timeout=cfg.timeout_seconds,
+            num_retries=0,
+            **kwargs,
+        )
+    except Exception as exc:  # noqa: BLE001 - LiteLLM raises many exception types
+        name = exc.__class__.__name__
+        if tools and ("UnsupportedParams" in name or ("BadRequest" in name and re.search(r"\b(tool|function)", str(exc), re.I))):
+            raise ToolsUnsupported(f"{cfg.display_name or cfg.model_name} does not support tool calling ({_friendly_error(exc)})") from exc
+        raise LLMError(_friendly_error(exc)) from exc
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError) as exc:
+        raise LLMError("The model returned an unexpected response.") from exc
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    return ToolResult(
+        text=(message.content or "").strip() if isinstance(message.content, str) else "",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        response_ms=elapsed_ms,
+        cost=estimate_cost(cfg, input_tokens, output_tokens, response),
+        model_id=cfg.model_id,
+        model_name=cfg.display_name or cfg.model_name,
+        tool_calls=_parse_tool_calls(message) if tools else [],
     )
 
 

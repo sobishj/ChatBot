@@ -117,6 +117,8 @@ class ChatIn(BaseModel):
     client_id: str = Field(min_length=1, max_length=64)
     session_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     message: str = Field(min_length=1, max_length=1000)
+    # Confirm (true) / Cancel (false) button of an API action waiting for confirmation.
+    confirm: bool | None = None
 
 
 @router.post("/api/chat")
@@ -131,8 +133,11 @@ def chat(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> JSONR
         return JSONResponse({"detail": "Too many messages. Please wait a moment and try again."}, status_code=429, headers=headers)
     if not body.message.strip():
         return JSONResponse({"detail": "Empty message."}, status_code=400, headers=headers)
-    result = answer_question(db, client, body.session_id, body.message, channel="widget")
-    return JSONResponse({"answer": result.answer, "sources": result.sources, "answered": result.answered}, headers=headers)
+    result = answer_question(db, client, body.session_id, body.message, channel="widget", confirm=body.confirm)
+    reply: dict[str, Any] = {"answer": result.answer, "sources": result.sources, "answered": result.answered}
+    if result.confirmation:  # only the summary: action definitions and API details stay on the server
+        reply["confirmation"] = {"action": result.confirmation["action"], "summary": result.confirmation["summary"]}
+    return JSONResponse(reply, headers=headers)
 
 
 @router.get("/widget.js")

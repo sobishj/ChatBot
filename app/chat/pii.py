@@ -31,3 +31,29 @@ def mask_pii(text: str) -> str:
     """Replace email addresses and phone numbers with placeholders."""
     text = _EMAIL_RE.sub(EMAIL_MASK, text)
     return _PHONE_CANDIDATE_RE.sub(_mask_phone, text)
+
+
+def tokenize_pii(text: str, vault: dict[str, str]) -> str:
+    """Like :func:`mask_pii`, but with numbered placeholders (``[phone_1]``) whose real values go in ``vault``.
+
+    Used for API actions: the model only sees placeholders, and the real values are put
+    back server-side, only in the request to the client's own API. The same value keeps
+    its placeholder across a conversation.
+    """
+    by_value = {v: k for k, v in vault.items()}
+
+    def token(kind: str, value: str) -> str:
+        if value in by_value:
+            return by_value[value]
+        n = sum(1 for k in vault if k.startswith(f"[{kind}_")) + 1
+        key = f"[{kind}_{n}]"
+        vault[key] = value
+        by_value[value] = key
+        return key
+
+    def phone(match: re.Match[str]) -> str:
+        masked = _mask_phone(match)
+        return token("phone", match.group(0).strip()) if masked == PHONE_MASK else masked
+
+    text = _EMAIL_RE.sub(lambda m: token("email", m.group(0)), text)
+    return _PHONE_CANDIDATE_RE.sub(phone, text)

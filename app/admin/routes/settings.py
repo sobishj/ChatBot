@@ -44,6 +44,7 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 def _view(db: Session) -> dict[str, Any]:
     values = get_settings_map(db, [*EDITABLE, "mode", "embedding", "worker_heartbeat"])
     values["clients"] = [{"client_id": c.client_id, "name": c.name} for c in db.scalars(select(Client).order_by(Client.id))]
+    values["rate_limits"] = {**DEFAULTS["rate_limits"], **(values["rate_limits"] or {})}  # limits added in later versions
     heartbeat = values.pop("worker_heartbeat") or {}
     age = _age_seconds(heartbeat)
     # What the worker (where indexing runs) reported in its last heartbeat.
