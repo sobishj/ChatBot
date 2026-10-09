@@ -16,11 +16,11 @@
   var API_BASE = script && script.src ? new URL(script.src, location.href).origin : location.origin;
 
   var STRINGS = {
-    en: { placeholder: "Type your question…", send: "Send", open: "Open chat", close: "Close chat", sources: "Sources", error: "Sorry, something went wrong. Please try again.", busy: "Too many messages. Please wait a moment.", title: "Chat" },
-    ml: { placeholder: "നിങ്ങളുടെ ചോദ്യം ടൈപ്പ് ചെയ്യുക…", send: "അയയ്ക്കുക", open: "ചാറ്റ് തുറക്കുക", close: "ചാറ്റ് അടയ്ക്കുക", sources: "ഉറവിടങ്ങൾ", error: "ക്ഷമിക്കണം, ഒരു പിശക് സംഭവിച്ചു. വീണ്ടും ശ്രമിക്കുക.", busy: "ധാരാളം സന്ദേശങ്ങൾ. അൽപ്പസമയം കാത്തിരിക്കുക.", title: "ചാറ്റ്" },
-    hi: { placeholder: "अपना प्रश्न लिखें…", send: "भेजें", open: "चैट खोलें", close: "चैट बंद करें", sources: "स्रोत", error: "क्षमा करें, कुछ गलत हो गया। फिर से प्रयास करें।", busy: "बहुत सारे संदेश। कृपया थोड़ी देर प्रतीक्षा करें।", title: "चैट" },
-    ar: { placeholder: "اكتب سؤالك…", send: "إرسال", open: "فتح الدردشة", close: "إغلاق الدردشة", sources: "المصادر", error: "عذرًا، حدث خطأ. حاول مرة أخرى.", busy: "رسائل كثيرة. يرجى الانتظار قليلًا.", title: "دردشة" },
-    ta: { placeholder: "உங்கள் கேள்வியை தட்டச்சு செய்யவும்…", send: "அனுப்பு", open: "அரட்டையைத் திற", close: "அரட்டையை மூடு", sources: "ஆதாரங்கள்", error: "மன்னிக்கவும், பிழை ஏற்பட்டது. மீண்டும் முயலவும்.", busy: "அதிக செய்திகள். சிறிது காத்திருக்கவும்.", title: "அரட்டை" }
+    en: { placeholder: "Type your question…", send: "Send", open: "Open chat", close: "Close chat", sources: "Sources", error: "Sorry, something went wrong. Please try again.", busy: "Too many messages. Please wait a moment.", title: "Chat", confirm: "Confirm", cancel: "Cancel" },
+    ml: { placeholder: "നിങ്ങളുടെ ചോദ്യം ടൈപ്പ് ചെയ്യുക…", send: "അയയ്ക്കുക", open: "ചാറ്റ് തുറക്കുക", close: "ചാറ്റ് അടയ്ക്കുക", sources: "ഉറവിടങ്ങൾ", error: "ക്ഷമിക്കണം, ഒരു പിശക് സംഭവിച്ചു. വീണ്ടും ശ്രമിക്കുക.", busy: "ധാരാളം സന്ദേശങ്ങൾ. അൽപ്പസമയം കാത്തിരിക്കുക.", title: "ചാറ്റ്", confirm: "സ്ഥിരീകരിക്കുക", cancel: "റദ്ദാക്കുക" },
+    hi: { placeholder: "अपना प्रश्न लिखें…", send: "भेजें", open: "चैट खोलें", close: "चैट बंद करें", sources: "स्रोत", error: "क्षमा करें, कुछ गलत हो गया। फिर से प्रयास करें।", busy: "बहुत सारे संदेश। कृपया थोड़ी देर प्रतीक्षा करें।", title: "चैट", confirm: "पुष्टि करें", cancel: "रद्द करें" },
+    ar: { placeholder: "اكتب سؤالك…", send: "إرسال", open: "فتح الدردشة", close: "إغلاق الدردشة", sources: "المصادر", error: "عذرًا، حدث خطأ. حاول مرة أخرى.", busy: "رسائل كثيرة. يرجى الانتظار قليلًا.", title: "دردشة", confirm: "تأكيد", cancel: "إلغاء" },
+    ta: { placeholder: "உங்கள் கேள்வியை தட்டச்சு செய்யவும்…", send: "அனுப்பு", open: "அரட்டையைத் திற", close: "அரட்டையை மூடு", sources: "ஆதாரங்கள்", error: "மன்னிக்கவும், பிழை ஏற்பட்டது. மீண்டும் முயலவும்.", busy: "அதிக செய்திகள். சிறிது காத்திருக்கவும்.", title: "அரட்டை", confirm: "உறுதிப்படுத்து", cancel: "ரத்து செய்" }
   };
 
   // ------------------------------------------------------------------ helpers
@@ -111,6 +111,11 @@
     ".sources span{display:block;font-weight:600;margin-bottom:3px}",
     ".sources a,.sources em{display:inline-block;margin:2px 6px 2px 0;padding:2px 8px;background:#f1f5f9;border-radius:999px;color:#1f2933;text-decoration:none;font-style:normal;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     ".sources a:hover{background:#e2e8f0}",
+    ".choices{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}",
+    ".choices button{border:1px solid var(--wa-primary);border-radius:8px;padding:6px 14px;font:inherit;font-size:14px;cursor:pointer;background:#fff;color:var(--wa-primary)}",
+    ".choices button.yes{background:var(--wa-primary);color:var(--wa-on-primary)}",
+    ".choices button:disabled{opacity:.5;cursor:default}",
+    ".choices button:focus-visible{outline:2px solid var(--wa-primary);outline-offset:2px}",
     ".typing{display:inline-flex;gap:4px;align-items:center}",
     ".typing i{width:7px;height:7px;border-radius:50%;background:#9aa5b1;animation:wa-b 1.2s infinite ease-in-out}",
     ".typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}",
@@ -235,6 +240,19 @@
         });
         div.appendChild(box);
       }
+      if (m.confirm) {
+        // An API action waiting for the visitor's OK: one click, then both buttons are disabled.
+        var choices = document.createElement("div");
+        choices.className = "choices";
+        [[t.confirm || STRINGS.en.confirm, true, "yes"], [t.cancel || STRINGS.en.cancel, false, "no"]].forEach(function (c) {
+          var b = document.createElement("button");
+          b.type = "button"; b.className = c[2]; b.textContent = c[0];
+          b.disabled = !!m.decided || busy;
+          b.addEventListener("click", function () { if (m.decided || busy) return; m.decided = true; save(); send(c[0], c[1]); });
+          choices.appendChild(b);
+        });
+        div.appendChild(choices);
+      }
       return div;
     }
 
@@ -262,9 +280,11 @@
 
     function add(m) { state.messages.push(m); save(); render(); }
 
-    function send(text) {
+    function send(text, confirm) {
       text = text.trim();
       if (!text || busy) return;
+      // Any new message settles an open confirmation (the server drops it as well).
+      state.messages.forEach(function (m) { if (m.confirm) m.decided = true; });
       add({ role: "user", text: text });
       input.value = ""; autosize();
       busy = true; sendBtn.disabled = true; render();
@@ -278,13 +298,15 @@
       fetch(apiBase + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId, session_id: state.sessionId, message: text })
+        body: JSON.stringify(typeof confirm === "boolean"
+          ? { client_id: clientId, session_id: state.sessionId, message: text, confirm: confirm }
+          : { client_id: clientId, session_id: state.sessionId, message: text })
       })
         .then(function (r) {
           return r.json().catch(function () { return {}; }).then(function (data) { return { status: r.status, data: data }; });
         })
         .then(function (res) {
-          if (res.status === 200) add({ role: "bot", text: res.data.answer || t.error, sources: res.data.sources || [] });
+          if (res.status === 200) add({ role: "bot", text: res.data.answer || t.error, sources: res.data.sources || [], confirm: !!res.data.confirmation });
           else add({ role: "bot", text: res.status === 429 ? t.busy : t.error });
         })
         .catch(function () { add({ role: "bot", text: t.error }); })
