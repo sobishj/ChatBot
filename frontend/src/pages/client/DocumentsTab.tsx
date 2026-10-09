@@ -23,7 +23,12 @@ const ACCEPT = ".pdf,.docx,.xlsx,.txt,.md";
 
 export function DocumentsTab({ client, reload, isSuper }: TabProps) {
   const [data, setData] = useState<DocsData | null>(null);
-  const [jobId, setJobId] = useState<number | null>(client.active_jobs?.find((j) => j.type === "index_docs" || j.type === "scan_folder")?.id ?? null);
+  const runningJob = client.active_jobs?.find((j) => j.type === "index_docs" || j.type === "scan_folder" || j.type === "reindex")?.id ?? null;
+  const [jobId, setJobId] = useState<number | null>(runningJob);
+  // Indexing continues in the background when you leave this tab; show it again on return.
+  useEffect(() => {
+    if (runningJob !== null) setJobId((current) => current ?? runningJob);
+  }, [runningJob]);
   const [over, setOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [large, setLarge] = useState<LargeUpload | null>(null);

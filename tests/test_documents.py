@@ -194,3 +194,32 @@ def test_scanned_pdf_reading_can_be_cancelled(tmp_path: Path) -> None:
     make_scanned_pdf(f, ["Page one", "Page two"])
     with pytest.raises(ReadCancelled):
         read_document(f, should_stop=lambda: True)
+
+
+@pytest.mark.integration
+def test_document_deleted_while_indexing_is_skipped(db: Session, embedder, make_client, data_dirs: Path) -> None:
+    from app.db.session import new_session
+    from app.documents.service import delete_document
+
+    client = make_client()
+    gone = save_upload(db, client, "a-gone.pdf", io.BytesIO(make_pdf("Delete me while indexing")))
+    kept = save_upload(db, client, "b-kept.pdf", io.BytesIO(make_pdf()))
+    gone_id = gone.id
+
+    class DeletingEmbedder:
+        """Deletes the first document (as an admin would, in another session) while it is being embedded."""
+
+        name, dim, count_tokens = embedder.name, embedder.dim, embedder.count_tokens
+
+        def encode(self, texts):
+            if any("Delete me" in t for t in texts):
+                other = new_session()
+                delete_document(other, other.get(Document, gone_id), other.get(type(client), client.id))
+                other.close()
+            return embedder.encode(texts)
+
+    logs: list[str] = []
+    stats = sync_documents(db, client, DeletingEmbedder(), log=logs.append)
+    assert stats["indexed"] == 1 and any("deleted while being indexed" in line for line in logs)
+    db.refresh(kept)
+    assert kept.status == "indexed" and db.get(Document, gone_id) is None

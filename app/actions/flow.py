@@ -145,7 +145,7 @@ def answer_with_actions(
     question = tokenize_pii(message.strip(), vault)[:MAX_MESSAGE_CHARS]
     save_vault(db, client.id, session_id, vault)
     b = branding(client)
-    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "rate_limits", "mode"])
+    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "rate_limits", "mode", "answer_any_document_topic"])
     limits = settings["rate_limits"] or {}
     language = detect_language(question, b.get("default_language") or "en")
     response = ChatResponse(answer=UNAVAILABLE_ANSWER, language=language)
@@ -231,7 +231,9 @@ def answer_with_actions(
         if not resumed:
             result_search = search(db, embedder or get_embedder(), client.id, question)
             hits, confidence = result_search.hits, result_search.confidence
-        messages: list[dict[str, Any]] = build_messages(settings["system_prompt"], b["bot_name"], client.name, hits, history, question)
+        messages: list[dict[str, Any]] = build_messages(
+            settings["system_prompt"], b["bot_name"], client.name, hits, history, question, bool(settings["answer_any_document_topic"])
+        )
         plain_messages = [dict(m) for m in messages]
         messages[0]["content"] += "\n\n" + ACTIONS_PROMPT.format(client_name=client.name, today=date.today().strftime("%A, %d %B %Y"))
         messages.extend(resumed)

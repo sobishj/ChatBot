@@ -240,6 +240,18 @@ path is checked: it must exist, be readable and lie inside `/mnt/watched`.
 To use a different host location, set `WATCHED_HOST_DIR=/srv/shared-docs` in `.env` and run
 `docker compose up -d`.
 
+Indexing runs in the worker, so it carries on when you leave the Documents tab or close the
+browser; the tab shows the progress again when you come back. If the worker restarts in the
+middle (e.g. `docker compose up -d --build`), indexing, crawl and re-index jobs start again
+automatically (up to 3 times; unchanged files are skipped). A document deleted while it is being
+indexed is skipped, and the rest of the job continues.
+
+**Off-topic documents.** By default the assistant answers like the business's own assistant.
+To let it answer any question an uploaded document covers, even one unrelated to the business
+(for example a letter or a manual on another subject), switch on **Settings → Answers & prompt
+→ Answer any question the uploaded documents cover**. Answers still come only from the client's
+own content.
+
 ## 7. AI models
 
 **Settings → AI models → Add model.** All calls go through LiteLLM, so you can add or switch
@@ -303,6 +315,18 @@ exactly as before.
    matter, e.g. "returns booking_id"). **Test** runs one action with parameters you enter.
 4. Try it in **Test chat**: the diagnostics panel lists every action call with parameters,
    status, time and a response excerpt.
+
+**Import from API** reads the API's own description (OpenAPI 3 or Swagger 2, JSON or YAML)
+and lists every endpoint in a searchable table. It looks at the usual addresses
+(`/openapi.json`, `/swagger.json`, `/v3/api-docs` …) on the API URL and its host, or you enter
+the spec's URL or upload the file. Tick the endpoints the assistant should use: each becomes an
+action with its parameters, types, required fields and allowed values filled in, and
+confirmation switched on for anything that isn't `GET`. Endpoints you don't tick can never be
+called. Endpoints with parts that can't be mapped (header or cookie parameters, lists or nested
+objects in the body) are marked, and can't be imported when such a part is required. The spec
+is fetched with the client's API key only from the API's own host, and passes the same address
+checks as action calls. Review the imported descriptions: the assistant reads them to decide
+which action to use.
 
 **Templates → Appointment booking** adds `list_departments`, `list_doctors`, `get_slots`,
 `book_appointment` and `cancel_appointment`. They match the demo API below; adjust paths and

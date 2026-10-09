@@ -51,6 +51,10 @@ export function ClientDetail() {
     setClient(null);
     reload();
   }, [reload]);
+  // Jobs keep running in the worker while you're on other tabs: refresh so each tab sees them.
+  useEffect(() => {
+    reload();
+  }, [tab, reload]);
 
   if (missing) return <div className="page"><Empty title="Client not found">It may have been deleted, or you don't have access. <Link to="/clients">Back to clients</Link></Empty></div>;
   if (!client) return <div className="page"><Loading /></div>;

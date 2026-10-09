@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -220,12 +221,21 @@ def sync_documents(
             def chunk_progress(done: int, total: int, i: int = i, n: int = len(files), label: str = label) -> None:
                 progress((i - 0.5 + done / total / 2) * 100 / n, f"{label} · embedded {done} of {total} chunks")
 
-            count = index_source(
-                db,
-                embedder,
-                Source(client.id, "doc", doc.filename, Path(doc.filename).stem, text, document_id=doc.id),
-                progress=chunk_progress,
-            )
+            doc_id = doc.id
+            try:
+                count = index_source(
+                    db,
+                    embedder,
+                    Source(client.id, "doc", doc.filename, Path(doc.filename).stem, text, document_id=doc_id),
+                    progress=chunk_progress,
+                )
+            except IntegrityError:
+                db.rollback()
+                if db.get(Document, doc_id) is None:  # deleted in the admin UI while it was being indexed
+                    log(f"Skipped {rel}: it was deleted while being indexed")
+                    rows.pop(rel, None)
+                    continue
+                raise
             doc.file_hash = digest
             doc.status = "indexed"
             doc.error = None

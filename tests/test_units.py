@@ -381,3 +381,11 @@ def test_list_models_openai_compatible_and_errors(monkeypatch: pytest.MonkeyPatc
         list_available_models("openai", None, "sk-bad")
     with pytest.raises(LLMError, match="API key first"):
         list_available_models("openai", None, None)
+
+
+def test_documents_any_topic_rule_is_optional() -> None:
+    hits = [SearchHit(1, "doc", "letter.pdf", "Letter", "The road will be repaired after the new work starts.")]
+    plain = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?")
+    assert "ADDITIONAL RULE" not in plain[0]["content"]
+    wide = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?", documents_any_topic=True)
+    assert "ADDITIONAL RULE" in wide[0]["content"] and "Acme's business" in wide[0]["content"]

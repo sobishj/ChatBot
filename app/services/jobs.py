@@ -12,7 +12,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.db.models import Job
@@ -111,16 +111,35 @@ def request_cancel(db: Session, job: Job) -> None:
     db.commit()
 
 
-def recover_stale_jobs(db: Session, stale_after: timedelta = timedelta(minutes=3)) -> int:
-    """Fail running jobs whose worker stopped sending heartbeats (e.g. container restart)."""
+# Safe to run again from the start: unchanged pages and documents are skipped.
+RESUMABLE = ("crawl", "index_docs", "scan_folder", "reindex")
+MAX_ATTEMPTS = 3
+
+
+def recover_stale_jobs(db: Session, stale_after: timedelta = timedelta(minutes=1)) -> int:
+    """Handle running jobs whose worker stopped sending heartbeats (e.g. a container restart).
+
+    Indexing-type jobs are queued again (up to MAX_ATTEMPTS runs); others are marked failed.
+    """
     cutoff = now() - stale_after
-    result = db.execute(
-        update(Job)
-        .where(Job.status == "running", (Job.heartbeat_at < cutoff) | Job.heartbeat_at.is_(None))
-        .values(status="failed", error="The worker stopped while running this job. Use Retry to run it again.", finished_at=now())
-    )
+    stale = list(db.scalars(select(Job).where(Job.status == "running", (Job.heartbeat_at < cutoff) | Job.heartbeat_at.is_(None))))
+    for job in stale:
+        attempts = int((job.payload or {}).get("_attempts", 1))
+        if job.type in RESUMABLE and attempts < MAX_ATTEMPTS:
+            job.status = "queued"
+            job.payload = {**(job.payload or {}), "_attempts": attempts + 1}
+            job.started_at = None
+            job.heartbeat_at = None
+            job.log = (job.log or "") + "The worker restarted during this job; running it again.\n"
+        else:
+            job.status = "failed"
+            job.error = "The worker stopped while running this job. Use Retry to run it again."
+            job.finished_at = now()
     db.commit()
-    return result.rowcount or 0
+    if any(j.status == "queued" for j in stale):
+        db.execute(text("SELECT pg_notify('jobs', 'recovered')"))
+        db.commit()
+    return len(stale)
 
 
 class JobContext:

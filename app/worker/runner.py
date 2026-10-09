@@ -23,6 +23,7 @@ HANDLERS: dict[str, Handler] = {}
 
 POLL_SECONDS = 2.0
 HEARTBEAT_SECONDS = 10.0
+RECOVER_EVERY = 6  # heartbeats between checks for jobs orphaned by a stopped worker
 
 
 def handler(job_type: str) -> Callable[[Handler], Handler]:
@@ -75,6 +76,8 @@ class Worker:
         self.threads = threads
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._running: set[int] = set()  # jobs this process is executing (only these get heartbeats)
+        self._running_lock = threading.Lock()
 
     def stop(self) -> None:
         self._stop.set()
@@ -87,7 +90,13 @@ class Worker:
                     job = job_service.claim_next(db)
                     job_id = job.id if job else None
                 if job_id is not None:
-                    run_job(job_id)
+                    with self._running_lock:
+                        self._running.add(job_id)
+                    try:
+                        run_job(job_id)
+                    finally:
+                        with self._running_lock:
+                            self._running.discard(job_id)
                     continue
             except Exception:  # noqa: BLE001 - keep the loop alive (e.g. DB restart)
                 logger.exception("Worker loop error")
@@ -95,14 +104,23 @@ class Worker:
             self._wake.clear()
 
     def _heartbeat(self) -> None:
+        beats = 0
         while not self._stop.is_set():
             try:
                 with session_scope() as db:
                     now_ = db.execute(text("SELECT now()")).scalar().isoformat()
                     # The GPU status is shown in Settings: the worker is where indexing runs.
                     set_setting(db, "worker_heartbeat", {"at": now_, "gpu": gpu_info(), "device": current_device()})
-                    # Keep running jobs alive for the stale-job detector.
-                    db.execute(text("UPDATE jobs SET heartbeat_at = now() WHERE status = 'running'"))
+                    # Keep only this process's jobs alive, so jobs orphaned by a restart are detected.
+                    with self._running_lock:
+                        ids = list(self._running)
+                    if ids:
+                        db.execute(text("UPDATE jobs SET heartbeat_at = now() WHERE id = ANY(:ids)"), {"ids": ids})
+                beats += 1
+                if beats % RECOVER_EVERY == 0:
+                    with session_scope() as db:
+                        if job_service.recover_stale_jobs(db):
+                            self._wake.set()
             except Exception:  # noqa: BLE001
                 logger.warning("Heartbeat failed", exc_info=True)
             self._stop.wait(HEARTBEAT_SECONDS)
@@ -111,7 +129,7 @@ class Worker:
         with session_scope() as db:
             recovered = job_service.recover_stale_jobs(db)
             if recovered:
-                logger.warning("Marked %s interrupted job(s) as failed", recovered)
+                logger.warning("Recovered %s interrupted job(s) (re-queued or failed)", recovered)
         threads = [threading.Thread(target=self._loop, name=f"job-{i}", daemon=True) for i in range(self.threads)]
         threads.append(threading.Thread(target=self._heartbeat, name="heartbeat", daemon=True))
         for t in threads:

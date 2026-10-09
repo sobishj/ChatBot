@@ -75,13 +75,48 @@ def test_cancel_queued_and_recover_stale(db: Session, make_client) -> None:
     job_service.request_cancel(db, job)
     assert job.status == "cancelled"
 
+    # Indexing-type jobs interrupted by a worker restart run again, up to MAX_ATTEMPTS times.
     stale = job_service.enqueue(db, "reindex", client.id)
-    job_service.claim_next(db)
-    db.execute(text("UPDATE jobs SET heartbeat_at = :t WHERE id = :id"), {"t": datetime.now(UTC) - timedelta(minutes=10), "id": stale.id})
-    db.commit()
-    assert job_service.recover_stale_jobs(db) == 1
-    db.refresh(stale)
+    for attempt in range(1, job_service.MAX_ATTEMPTS + 1):
+        assert job_service.claim_next(db).id == stale.id
+        db.execute(text("UPDATE jobs SET heartbeat_at = :t WHERE id = :id"), {"t": datetime.now(UTC) - timedelta(minutes=10), "id": stale.id})
+        db.commit()
+        assert job_service.recover_stale_jobs(db) == 1
+        db.refresh(stale)
+        if attempt < job_service.MAX_ATTEMPTS:
+            assert stale.status == "queued" and stale.payload["_attempts"] == attempt + 1 and "running it again" in stale.log
     assert stale.status == "failed"
+
+    # Other jobs (e.g. a model download) are not repeated automatically.
+    download = job_service.enqueue(db, "download_embedding", payload={"model": "x/y"})
+    job_service.claim_next(db)
+    db.execute(text("UPDATE jobs SET heartbeat_at = NULL WHERE id = :id"), {"id": download.id})
+    db.commit()
+    job_service.recover_stale_jobs(db)
+    db.refresh(download)
+    assert download.status == "failed"
+
+
+def test_worker_heartbeat_only_keeps_its_own_jobs_alive(db: Session, make_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.worker import runner
+
+    client = make_client()
+    mine = job_service.enqueue(db, "crawl", client.id)
+    orphan = job_service.enqueue(db, "index_docs", client.id)
+    job_service.claim_next(db)
+    job_service.claim_next(db)
+    old = datetime.now(UTC) - timedelta(minutes=10)
+    db.execute(text("UPDATE jobs SET heartbeat_at = :t"), {"t": old})
+    db.commit()
+
+    worker = runner.Worker(threads=1)
+    worker._running.add(mine.id)
+    monkeypatch.setattr(runner, "RECOVER_EVERY", 1)
+    monkeypatch.setattr(worker._stop, "wait", lambda _s: worker._stop.set())  # one heartbeat, then stop
+    worker._heartbeat()
+    db.expire_all()
+    assert db.get(job_service.Job, mine.id).status == "running"
+    assert db.get(job_service.Job, orphan.id).status == "queued"  # orphaned by a restart: queued again
 
 
 def _site(pages: dict[str, str]):

@@ -43,6 +43,13 @@ def render_system_prompt(template: str, bot_name: str, client_name: str, context
     return f"{prompt}\n\nCONTEXT:\n{context}"
 
 
+DOCUMENTS_ANY_TOPIC_RULE = (
+    "ADDITIONAL RULE: The CONTEXT may include uploaded documents (sources marked \"document:\") about any subject, "
+    "not only {client_name}'s business. If such a document answers the visitor's question, answer it from the document "
+    "even when the topic is unrelated to our business. Still use only what the document says."
+)
+
+
 def build_messages(
     template: str,
     bot_name: str,
@@ -50,9 +57,15 @@ def build_messages(
     hits: list[SearchHit],
     history: list[tuple[str, str]],
     question: str,
+    documents_any_topic: bool = False,
 ) -> list[dict[str, str]]:
-    """``history`` is a list of (question, answer) pairs, oldest first."""
+    """``history`` is a list of (question, answer) pairs, oldest first.
+
+    ``documents_any_topic`` (Settings → Answers) lets uploaded documents answer off-topic questions.
+    """
     system = render_system_prompt(template, bot_name, client_name, format_context(hits))
+    if documents_any_topic:
+        system += "\n\n" + DOCUMENTS_ANY_TOPIC_RULE.format(client_name=client_name)
     messages = [{"role": "system", "content": system}]
     for past_question, past_answer in history:
         messages.append({"role": "user", "content": past_question})
