@@ -15,7 +15,7 @@ interface Param { name: string; type: string; location: string; required: boolea
 interface Action { id: number; name: string; description: string; method: string; path: string; parameters: Param[]; requires_confirmation: boolean; enabled: boolean; response_hint: string }
 interface ApiSettings {
   base_url: string; auth_type: "header" | "bearer" | "query"; auth_name: string; api_key_masked: string; has_api_key: boolean;
-  api_key_unreadable: boolean; timeout_seconds: number; extra_headers: Record<string, string>; health_path: string;
+  api_key_unreadable: boolean; timeout_seconds: number; extra_headers: Record<string, string>; health_path: string; openapi_url: string;
 }
 interface ActionsData { enabled: boolean; settings: ApiSettings; actions: Action[]; can_edit: boolean; mode: string; allows_private: boolean }
 interface CallResult { action?: string; ok: boolean; status_code: number | null; error: string | null; response_ms: number; response?: string | null; excerpt?: string; params?: Record<string, unknown> }
@@ -167,6 +167,7 @@ const emptyAction = (): Omit<Action, "id"> => ({ name: "", description: "", meth
 function ActionsCard({ base, data, onSaved }: { base: string; data: ActionsData; onSaved: (d: ActionsData) => void }) {
   const [editing, setEditing] = useState<Action | "new" | null>(null);
   const [testing, setTesting] = useState<Action | null>(null);
+  const [importing, setImporting] = useState(false);
   const { busy, run } = useAction();
   const toast = useToast();
   const ro = !data.can_edit;
@@ -182,13 +183,14 @@ function ActionsCard({ base, data, onSaved }: { base: string; data: ActionsData;
       subtitle="What the assistant may do with the API. Anything that changes data is always confirmed by the visitor first."
       actions={!ro && (
         <div className="row">
+          <Button icon="download" disabled={!data.settings.base_url} onClick={() => setImporting(true)}>Import from API</Button>
           <Button loading={busy} onClick={template}>Templates: appointment booking</Button>
           <Button kind="primary" icon="plus" onClick={() => setEditing("new")}>Add action</Button>
         </div>
       )}
       bodyless
     >
-      {data.actions.length === 0 ? <Empty title="No actions yet">{ro ? "A super admin can add actions." : "Add one, or start from the appointment-booking template and adjust it to the client's API."}</Empty> : (
+      {data.actions.length === 0 ? <Empty title="No actions yet">{ro ? "A super admin can add actions." : "Import them from the API's own description (OpenAPI/Swagger), add one by hand, or start from the appointment-booking template."}</Empty> : (
         <div className="table-wrap">
           <table className="table">
             <thead><tr><th>Name</th><th>Method</th><th>Path</th><th>Enabled</th><th>Confirmation</th><th /></tr></thead>
@@ -212,6 +214,7 @@ function ActionsCard({ base, data, onSaved }: { base: string; data: ActionsData;
       )}
       {editing && <ActionForm base={base} action={editing === "new" ? null : editing} readOnly={ro} onClose={() => setEditing(null)} onSaved={(d) => { onSaved(d); setEditing(null); }} />}
       {testing && <TestAction base={base} action={testing} onClose={() => setTesting(null)} />}
+      {importing && <ImportDialog base={base} data={data} onClose={() => setImporting(false)} onSaved={onSaved} />}
     </Card>
   );
 }
@@ -355,6 +358,121 @@ function TestAction({ base, action, onClose }: { base: string; action: Action; o
             {result.error && <Alert kind="error">{result.error}</Alert>}
             {result.response && <pre className="log-box">{result.response}</pre>}
           </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------- import from the API's own spec
+interface Endpoint {
+  key: string; method: string; path: string; summary: string; importable: boolean; notes: string[]; added: boolean;
+  action: Omit<Action, "id">;
+}
+interface Discovered { source: string; title: string; version: string; endpoints: Endpoint[] }
+
+function ImportDialog({ base, data, onClose, onSaved }: { base: string; data: ActionsData; onClose: () => void; onSaved: (d: ActionsData) => void }) {
+  const [specUrl, setSpecUrl] = useState(data.settings.openapi_url);
+  const [found, setFound] = useState<Discovered | null>(null);
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [errors, setErrors] = useState<string[]>([]);
+  const { busy, run } = useAction();
+  const toast = useToast();
+
+  const discover = (body: { spec_url?: string; spec_text?: string }) => run(async () => {
+    const d = await api<Discovered>(`${base}/openapi/discover`, { body });
+    setFound(d);
+    setPicked(new Set());
+    setErrors([]);
+  });
+  const upload = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 5_000_000) return toast("The spec file is larger than 5 MB.", "error");
+    file.text().then((spec_text) => discover({ spec_text }));
+  };
+
+  const q = query.trim().toLowerCase();
+  const visible = (found?.endpoints ?? []).filter((e) =>
+    !q || `${e.method} ${e.path} ${e.summary} ${e.action.name}`.toLowerCase().includes(q));
+  const choosable = visible.filter((e) => e.importable && !e.added);
+  const allPicked = choosable.length > 0 && choosable.every((e) => picked.has(e.key));
+  const toggle = (key: string, on: boolean) => setPicked((p) => { const n = new Set(p); if (on) n.add(key); else n.delete(key); return n; });
+
+  const doImport = () => run(async () => {
+    const actions = (found?.endpoints ?? []).filter((e) => picked.has(e.key)).map((e) => e.action);
+    const d = await api<ActionsData & { added: string[]; errors: string[] }>(`${base}/openapi/import`, { body: { actions } });
+    onSaved(d);
+    if (d.added.length) toast(`Added ${d.added.length} action(s). Review their descriptions: the assistant reads them to decide what to call.`);
+    if (d.errors.length) setErrors(d.errors);
+    else onClose();
+  });
+
+  return (
+    <Modal
+      title="Import actions from the API's spec"
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <Button onClick={onClose}>Close</Button>
+          <span className="spacer" />
+          {found && <Button kind="primary" loading={busy} disabled={picked.size === 0} onClick={doImport}>Add {picked.size || ""} action{picked.size === 1 ? "" : "s"}</Button>}
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted small" style={{ margin: 0 }}>
+          Most APIs publish an OpenAPI (Swagger) description of their endpoints. Find it automatically, enter its address, or upload the file,
+          then tick only the endpoints the assistant should use. Endpoints you don't add can never be called.
+        </p>
+        <div className="row">
+          <input className="input mono" style={{ flex: 1, minWidth: 220 }} value={specUrl} onChange={(e) => setSpecUrl(e.target.value)}
+            placeholder="Auto-detect, or e.g. /openapi.json or https://…/swagger.json" aria-label="Spec URL" />
+          <Button kind="primary" loading={busy} onClick={() => discover({ spec_url: specUrl.trim() || undefined })}>{specUrl.trim() ? "Load" : "Find automatically"}</Button>
+          <label className="btn" style={{ cursor: "pointer" }}>
+            Upload file
+            <input type="file" accept=".json,.yaml,.yml,application/json" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
+          </label>
+        </div>
+        {errors.length > 0 && <Alert kind="error">{errors.map((e) => <div key={e}>{e}</div>)}</Alert>}
+        {found && (
+          <>
+            <div className="small muted">
+              {found.title || "API"}{found.version && ` ${found.version}`} · {found.endpoints.length} endpoints · from <span className="mono">{found.source}</span>
+            </div>
+            <div className="row">
+              <input className="input" style={{ flex: 1 }} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search endpoints, e.g. slot, book, GET" aria-label="Search endpoints" autoFocus />
+              <label className="check small">
+                <input type="checkbox" checked={allPicked} disabled={choosable.length === 0}
+                  onChange={(e) => setPicked((p) => { const n = new Set(p); choosable.forEach((x) => (e.target.checked ? n.add(x.key) : n.delete(x.key))); return n; })} />
+                Select all shown
+              </label>
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 380, overflowY: "auto" }}>
+              <table className="table">
+                <thead><tr><th /><th>Endpoint</th><th>Becomes action</th><th>Parameters</th></tr></thead>
+                <tbody>
+                  {visible.map((e) => (
+                    <tr key={e.key} style={{ opacity: e.importable && !e.added ? 1 : 0.6 }}>
+                      <td style={{ width: 28 }}>
+                        <input type="checkbox" checked={picked.has(e.key)} disabled={!e.importable || e.added} onChange={(ev) => toggle(e.key, ev.target.checked)} aria-label={`Add ${e.key}`} />
+                      </td>
+                      <td>
+                        <Badge color={e.method === "GET" ? "blue" : "amber"}>{e.method}</Badge> <span className="mono small">{e.path}</span>
+                        {e.summary && <div className="small muted">{e.summary}</div>}
+                        {e.added && <div className="small"><Badge color="green">Already added</Badge></div>}
+                        {e.notes.length > 0 && <div className="small" style={{ color: e.importable ? "var(--muted)" : "var(--danger)" }}>{e.importable ? "Note: " : "Can't import: "}{e.notes.join("; ")}</div>}
+                      </td>
+                      <td className="mono small">{e.action.name}{e.method !== "GET" && <div className="muted" style={{ fontFamily: "inherit" }}>visitor confirms</div>}</td>
+                      <td className="small">{e.action.parameters.map((p) => p.name).join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                  {visible.length === 0 && <tr><td colSpan={4} className="muted">No endpoints match “{query}”.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </Modal>

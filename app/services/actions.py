@@ -47,6 +47,7 @@ def settings_view(client: Client) -> dict[str, Any]:
         "timeout_seconds": int(s.get("timeout_seconds") or DEFAULT_TIMEOUT),
         "extra_headers": dict(s.get("extra_headers") or {}),
         "health_path": s.get("health_path") or "",
+        "openapi_url": s.get("openapi_url") or "",
     }
 
 

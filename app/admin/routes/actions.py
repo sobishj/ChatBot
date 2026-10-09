@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.actions.executor import ActionError, allow_private_targets, build_request, execute, send
+from app.actions.openapi import MAX_SPEC_BYTES, SpecError, endpoints, fetch_spec, parse_text
 from app.admin.deps import get_client_for_user, require_setup_completed, require_super_admin, require_user
 from app.db.models import Client, ClientAction, User
 from app.db.session import get_db
@@ -85,6 +86,59 @@ def apply_template(client: Client = Depends(get_client_for_user), user: User = D
     added = add_template(db, client)
     db.commit()
     return {**_view(db, client, user), "added": added}
+
+
+class DiscoverIn(BaseModel):
+    spec_url: str | None = Field(default=None, max_length=1000)  # absolute, or a path relative to the API URL
+    spec_text: str | None = Field(default=None, max_length=MAX_SPEC_BYTES)  # an uploaded spec file (JSON or YAML)
+
+
+@router.post("/openapi/discover")
+def discover_endpoints(
+    body: DiscoverIn, client: Client = Depends(get_client_for_user), _: User = Depends(require_super_admin), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """List the endpoints of the client's OpenAPI/Swagger spec as action drafts (nothing is saved)."""
+    try:
+        if body.spec_text:
+            spec, source = parse_text(body.spec_text), "uploaded file"
+        else:
+            spec, source = fetch_spec(client, body.spec_url or (client.api_settings or {}).get("openapi_url"), allow_private_targets(get_setting(db, "mode")))
+            client.api_settings = {**(client.api_settings or {}), "openapi_url": source}  # remembered for next time
+            db.commit()
+    except SpecError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    settings = client.api_settings or {}
+    found = endpoints(spec, settings.get("auth_name") or "X-API-Key", settings.get("base_url") or "")
+    existing = {(a.method, a.path) for a in list_actions(db, client)}
+    info = spec.get("info") or {}
+    return {
+        "source": source,
+        "title": str(info.get("title") or ""),
+        "version": str(info.get("version") or ""),
+        "endpoints": [{**e, "added": (e["method"], e["path"]) in existing} for e in found],
+    }
+
+
+class ImportIn(BaseModel):
+    actions: list[dict[str, Any]] = Field(max_length=50)
+
+
+@router.post("/openapi/import")
+def import_endpoints(
+    body: ImportIn, client: Client = Depends(get_client_for_user), user: User = Depends(require_super_admin), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Create actions from the chosen drafts. Each is validated like a hand-made action; bad ones are reported."""
+    added: list[str] = []
+    errors: list[str] = []
+    for draft in body.actions:
+        try:
+            with db.begin_nested():
+                save_action(db, client, draft)
+            added.append(str(draft.get("name")))
+        except ActionConfigError as exc:
+            errors.append(f"{draft.get('name') or draft.get('path')}: {exc}")
+    db.commit()
+    return {**_view(db, client, user), "added": added, "errors": errors}
 
 
 @router.put("/actions/{action_id}")
