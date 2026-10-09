@@ -34,7 +34,10 @@ interface SettingsData {
   confidence_threshold: number;
   crawl_schedule: { frequency: "daily" | "weekly" | "off"; time: string; weekday: number };
   timezone: string;
-  rate_limits: { chat_per_ip_per_minute: number; chat_per_client_per_minute: number; login_per_ip_per_15min: number };
+  rate_limits: {
+    chat_per_ip_per_minute: number; chat_per_client_per_minute: number; login_per_ip_per_15min: number;
+    action_calls_per_session_per_hour: number; confirmed_actions_per_session_per_day: number;
+  };
   public_domain: string;
   chat_notice: string;
   retention_days: number;
@@ -310,6 +313,8 @@ function LimitsTab({ data, onSaved }: { data: SettingsData; onSaved: (d: Setting
         {field("chat_per_ip_per_minute", "Chat messages per visitor IP / minute", "Typical: 10–30.")}
         {field("chat_per_client_per_minute", "Chat messages per client / minute", "Across all visitors of one website.")}
         {field("login_per_ip_per_15min", "Admin sign-in attempts per IP / 15 minutes", "Slows down password guessing.")}
+        {field("action_calls_per_session_per_hour", "API action calls per conversation / hour", "Calls to a client's API (API actions), e.g. checking slots.")}
+        {field("confirmed_actions_per_session_per_day", "Confirmed changes per conversation / day", "Bookings and other changes a visitor confirmed (API actions).")}
       </div>
       <div className="row end" style={{ marginTop: 14 }}><Button kind="primary" loading={busy} onClick={() => save({ rate_limits: limits })}>Save</Button></div>
     </Card>

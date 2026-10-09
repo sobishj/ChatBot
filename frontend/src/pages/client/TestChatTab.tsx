@@ -20,9 +20,11 @@ interface Answer {
   language: string;
   error: string | null;
   chunks: { title: string; source: string; source_type: string; similarity: number | null; keyword: boolean; preview: string }[];
+  confirmation: { action: string; summary: string } | null;
+  action_results: { action: string; ok: boolean; status_code: number | null; error: string | null; response_ms: number; params: Record<string, unknown>; response: string | null }[];
 }
 
-type Turn = { question: string; answer?: Answer; failed?: string };
+type Turn = { question: string; answer?: Answer; failed?: string; decided?: boolean };
 
 const newSession = () => "test-" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
 
@@ -38,16 +40,17 @@ export function TestChatTab({ client }: TabProps) {
     log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
   }, [turns, busy]);
 
-  const send = async (e?: FormEvent) => {
+  const send = async (e?: FormEvent, button?: { text: string; confirm: boolean }) => {
     e?.preventDefault();
-    const q = input.trim();
+    const q = button ? button.text : input.trim();
     if (!q || busy) return;
-    setInput("");
+    if (!button) setInput("");
     setBusy(true);
     const index = turns.length;
-    setTurns((t) => [...t, { question: q }]);
+    // Any new message settles an open confirmation (the server drops it too).
+    setTurns((t) => [...t.map((x) => (x.answer?.confirmation ? { ...x, decided: true } : x)), { question: q }]);
     try {
-      const answer = await api<Answer>(`/api/admin/clients/${client.client_id}/test-chat`, { body: { session_id: session, message: q } });
+      const answer = await api<Answer>(`/api/admin/clients/${client.client_id}/test-chat`, { body: { session_id: session, message: q, confirm: button?.confirm ?? null } });
       setTurns((t) => t.map((x, i) => (i === index ? { ...x, answer } : x)));
       setSelected(index);
     } catch (err) {
@@ -76,8 +79,15 @@ export function TestChatTab({ client }: TabProps) {
                         {t.answer.sources.map((s) => s.url ? <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : <span key={s.title}>📄 {s.title}</span>)}
                       </div>
                     )}
+                    {t.answer.confirmation && (
+                      <div className="row" style={{ marginTop: 8 }}>
+                        <Button size="sm" kind="primary" disabled={t.decided || busy} onClick={(ev) => { ev.stopPropagation(); send(undefined, { text: "Confirm", confirm: true }); }}>Confirm</Button>
+                        <Button size="sm" disabled={t.decided || busy} onClick={(ev) => { ev.stopPropagation(); send(undefined, { text: "Cancel", confirm: false }); }}>Cancel</Button>
+                      </div>
+                    )}
                     <div className="meta">
                       <Badge color={t.answer.answered ? "green" : "amber"}>{t.answer.answered ? "Answered" : "Unanswered"}</Badge>
+                      {t.answer.action_results.length > 0 && <Badge color="blue">{t.answer.action_results.length} action{t.answer.action_results.length > 1 ? "s" : ""}</Badge>}
                       <span>confidence {t.answer.confidence.toFixed(2)}</span>
                       <span>{t.answer.model_name ?? "no model"}{t.answer.used_fallback ? " (fallback)" : ""}</span>
                       <span>{duration(t.answer.response_ms)}</span>
@@ -107,6 +117,28 @@ export function TestChatTab({ client }: TabProps) {
               <dt>Tokens</dt><dd>{current.input_tokens} in / {current.output_tokens} out · {money(current.cost)}</dd>
               <dt>Language</dt><dd>{current.language}</dd>
             </dl>
+            {current.confirmation && <div className="alert info">Waiting for confirmation: <span className="mono">{current.confirmation.action}</span></div>}
+            {current.action_results.length > 0 && (
+              <div>
+                <h3 style={{ marginBottom: 8 }}>API actions ({current.action_results.length})</h3>
+                <div className="stack" style={{ gap: 8 }}>
+                  {current.action_results.map((r, i) => (
+                    <div className="chunk" key={i}>
+                      <div className="row between">
+                        <strong className="mono">{r.action}</strong>
+                        <span className="row" style={{ gap: 4 }}>
+                          <Badge color={r.ok ? "green" : "red"}>{r.status_code ?? (r.ok ? "OK" : "Error")}</Badge>
+                          <span className="small muted">{duration(r.response_ms)}</span>
+                        </span>
+                      </div>
+                      <div className="small mono muted" style={{ overflowWrap: "anywhere" }}>{JSON.stringify(r.params)}</div>
+                      {r.error && <div className="small" style={{ color: "var(--danger)", marginTop: 4 }}>{r.error}</div>}
+                      {r.response && <div className="small mono" style={{ marginTop: 4, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{r.response.slice(0, 600)}{r.response.length > 600 ? "…" : ""}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <h3 style={{ marginBottom: 8 }}>Retrieved content ({current.chunks.length})</h3>
               <div className="stack" style={{ gap: 8 }}>

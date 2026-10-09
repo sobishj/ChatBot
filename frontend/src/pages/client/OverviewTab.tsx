@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { JobProgress } from "../../components/JobProgress";
-import { Alert, Button, Card, Stat, StatusBadge, useAction } from "../../components/ui";
+import { Alert, Badge, Button, Card, Stat, StatusBadge, useAction } from "../../components/ui";
 import { dateTime, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
@@ -50,12 +50,14 @@ export function OverviewTab({ client, reload, isSuper }: TabProps) {
                 <Button kind="primary" loading={busy} onClick={() => run(async () => { await api(`/api/admin/clients/${client.client_id}`, { method: "PATCH", body: { name, website_url: website } }); await reload(); }, "Saved")}>Save</Button>
               </div>
               <p className="hint">Inactive clients' widgets stay hidden and their content isn't re-crawled.</p>
+              <div className="row small">API actions: {client.api_actions_enabled ? <Badge color="green">On</Badge> : <Badge>Off</Badge>}</div>
             </div>
           ) : (
             <dl className="kv">
               <dt>Client ID</dt><dd className="mono">{client.client_id}</dd>
               <dt>Website</dt><dd>{client.website_url ?? "—"}</dd>
               <dt>Created</dt><dd>{dateTime(client.created_at)}</dd>
+              <dt>API actions</dt><dd>{client.api_actions_enabled ? <Badge color="green">On</Badge> : <Badge>Off</Badge>}</dd>
             </dl>
           )}
         </Card>

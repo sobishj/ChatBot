@@ -5,6 +5,7 @@ import { api, ApiError, type Client } from "../../api";
 import { useAuth } from "../../auth";
 import { PageHead } from "../../components/Layout";
 import { Badge, Empty, Loading, Tabs } from "../../components/ui";
+import { ApiActionsTab } from "./ApiActionsTab";
 import { BrandingTab } from "./BrandingTab";
 import { ConversationsTab } from "./ConversationsTab";
 import { DocumentsTab } from "./DocumentsTab";
@@ -23,6 +24,7 @@ const ALL_TABS = [
   { key: "model", label: "AI model" },
   { key: "branding", label: "Branding" },
   { key: "domains", label: "Allowed domains", superOnly: true },
+  { key: "actions", label: "API actions" },
   { key: "test", label: "Test chat" },
   { key: "embed", label: "Embed code" },
   { key: "stats", label: "Stats" },
@@ -72,6 +74,7 @@ export function ClientDetail() {
       {current === "model" && <ModelTab {...props} />}
       {current === "branding" && <BrandingTab {...props} />}
       {current === "domains" && <DomainsTab {...props} />}
+      {current === "actions" && <ApiActionsTab {...props} />}
       {current === "test" && <TestChatTab {...props} />}
       {current === "embed" && <EmbedTab {...props} />}
       {current === "stats" && <StatsTab {...props} />}
