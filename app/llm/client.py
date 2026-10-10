@@ -153,6 +153,19 @@ def estimate_cost(cfg: ModelConfig, input_tokens: int, output_tokens: int, respo
         return 0.0
 
 
+def preload_litellm() -> None:
+    """Import LiteLLM in the background at startup: it takes ~2 s, which the first visitor would otherwise wait for."""
+    import threading
+
+    def _run() -> None:
+        try:
+            import litellm  # noqa: F401
+        except Exception:  # noqa: BLE001 - a failed preload just means importing on first use
+            logger.warning("Could not preload LiteLLM", exc_info=True)
+
+    threading.Thread(target=_run, name="litellm-preload", daemon=True).start()
+
+
 def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int | None = None) -> LLMResult:
     """Call the model and return text + usage. Raises :class:`LLMError` on any failure."""
     import litellm  # imported lazily: it is slow to import

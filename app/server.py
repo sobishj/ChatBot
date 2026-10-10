@@ -21,6 +21,7 @@ from app.admin_app import create_admin_app
 from app.config import get_settings
 from app.db.startup import prepare_database
 from app.embeddings.model import preload_embedder
+from app.llm.client import preload_litellm
 from app.logging_setup import configure_logging
 from app.public_app import create_public_app
 
@@ -58,6 +59,7 @@ async def serve() -> None:
     configure_logging(settings.log_level)
     prepare_database()
     preload_embedder()  # chat answers need it; loading takes 15-30 s on a CPU
+    preload_litellm()  # ~2 s import, otherwise paid by the first chat answer
 
     servers = [
         _server(create_admin_app(), settings.admin_port, settings.forwarded_allow_ips, settings.log_level),
