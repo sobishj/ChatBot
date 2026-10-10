@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 from app.search.hybrid import SearchHit
 
@@ -12,12 +12,17 @@ _NO_ANSWER_RE = re.compile(r"\[\[\s*NO[_ ]ANSWER\s*\]\]", re.IGNORECASE)
 MAX_CONTEXT_CHARS = 12_000
 
 
-def format_context(hits: list[SearchHit]) -> str:
-    """Numbered context blocks with their source, trimmed to a safe total size."""
-    if not hits:
-        return "(no relevant information found)"
+def format_context(hits: list[SearchHit], key_facts: str = "", client_name: str = "") -> str:
+    """Numbered context blocks with their source, trimmed to a safe total size.
+
+    ``key_facts`` (the client's always-included key information) comes first, as block [0].
+    """
     blocks: list[str] = []
-    used = 0
+    if key_facts.strip():
+        blocks.append(f"[0] Key information about {client_name or 'us'} (always applies)\n{key_facts.strip()}")
+    if not hits:
+        return blocks[0] if blocks else "(no relevant information found)"
+    used = len(blocks[0]) if blocks else 0
     for i, hit in enumerate(hits, start=1):
         label = hit.source if hit.source_type == "web" else f"document: {hit.source}"
         block = f"[{i}] {hit.title or 'Untitled'} ({label})\n{hit.content.strip()}"
@@ -52,6 +57,11 @@ DOCUMENTS_ANY_TOPIC_RULE = (
     "When the documents describe the subject, answer directly: don't begin with a disclaimer such as \"I don't have "
     "information about this\" or \"this isn't related to us\". Never add facts that are not in the CONTEXT."
 )
+SUBJECT_RULE = (
+    "SUBJECT RULE: When the visitor doesn't say which shop, product or service they mean and it isn't clear from the "
+    "conversation, they mean {client_name} itself: for example \"is it open?\" asks about {client_name}'s own opening hours, "
+    "not a shop's. Only give details of an individual shop, product or service when the visitor asks about it."
+)
 ON_TOPIC_RULE = (
     "TOPIC RULE: Only answer questions about {client_name}: our products, services, offers, locations, opening hours, "
     "policies, contact details and other things a visitor would ask us. If the question is about something unrelated to "
@@ -68,15 +78,20 @@ def build_messages(
     history: list[tuple[str, str]],
     question: str,
     documents_any_topic: bool = False,
+    key_facts: str = "",
+    now: datetime | None = None,
 ) -> list[dict[str, str]]:
     """``history`` is a list of (question, answer) pairs, oldest first.
 
     ``documents_any_topic`` (the client's Documents tab) lets uploaded documents answer questions on any
     subject; otherwise the assistant keeps to the client's business.
     """
-    system = render_system_prompt(template, bot_name, client_name, format_context(hits))
+    context = format_context(hits, key_facts, client_name)
+    system = render_system_prompt(template, bot_name, client_name, context, now.date() if now else None)
     rule = DOCUMENTS_ANY_TOPIC_RULE if documents_any_topic else ON_TOPIC_RULE
-    system += "\n\n" + rule.format(client_name=client_name)
+    system += "\n\n" + SUBJECT_RULE.format(client_name=client_name) + "\n\n" + rule.format(client_name=client_name)
+    if now is not None:  # lets the assistant answer "is it open now?"
+        system += f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname() or 'local'})."
     messages = [{"role": "system", "content": system}]
     for past_question, past_answer in history:
         messages.append({"role": "user", "content": past_question})

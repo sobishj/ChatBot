@@ -8,7 +8,7 @@ import { approxTime, bytes, money, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
 interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; enabled: boolean; uploaded_at: string; indexed_at: string | null }
-interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; answer_any_topic: boolean }; watched_root: string; mode: string }
+interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; answer_any_topic: boolean; key_facts: string }; watched_root: string; mode: string }
 
 /** Returned instead of starting indexing when the local embedding model would take very long. */
 interface LargeUpload {
@@ -127,8 +127,9 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
         )}
       </Card>
 
-      <Card title="Answering from documents">
+      <Card title="Answering">
         <div className="stack">
+          <KeyFacts client={client} value={data.settings.key_facts} onSaved={(settings) => setData({ ...data, settings })} />
           <label className="check">
             <input type="checkbox" checked={data.settings.answer_any_topic} disabled={busy}
               onChange={(e) => run(async () => {
@@ -199,6 +200,27 @@ function LargeUploadDialog({ info, isSuper, onClose, onIndexLocal }: { info: Lar
         <p className="small muted" style={{ margin: 0 }}>The files are saved either way. If you decide later, use <strong>Index now</strong> on this tab.</p>
       </div>
     </Modal>
+  );
+}
+
+function KeyFacts({ client, value, onSaved }: { client: TabProps["client"]; value: string; onSaved: (s: DocsData["settings"]) => void }) {
+  const [text, setText] = useState(value);
+  const { busy, run } = useAction();
+  return (
+    <Field
+      label="Key information (always given to the assistant)"
+      htmlFor="key-facts"
+      hint={`Facts the assistant must always know, whatever the visitor asks: ${client.name}'s opening hours, address, phone, parking… Keep it short. For "is it open now?" it uses the current time in the time zone set under Settings → Crawl schedule.`}
+    >
+      <textarea id="key-facts" className="textarea" rows={4} maxLength={4000} value={text} onChange={(e) => setText(e.target.value)}
+        placeholder={"Open every day, 9:00 AM to 11:00 PM.\nAddress: …\nPhone: …"} />
+      <div className="row end" style={{ marginTop: 8 }}>
+        <Button kind="primary" size="sm" loading={busy} disabled={text === value}
+          onClick={() => run(async () => onSaved((await api<{ settings: DocsData["settings"] }>(`/api/admin/clients/${client.client_id}/documents/answering`, { method: "PUT", body: { key_facts: text } })).settings), "Key information saved")}>
+          Save key information
+        </Button>
+      </div>
+    </Field>
   );
 }
 

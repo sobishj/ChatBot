@@ -339,13 +339,19 @@ class DocSettingsIn(BaseModel):
 
 
 class DocAnsweringIn(BaseModel):
-    answer_any_topic: bool
+    answer_any_topic: bool | None = None
+    key_facts: str | None = Field(default=None, max_length=4000)
 
 
 @router.put("/{client_id}/documents/answering")
 def update_document_answering(body: DocAnsweringIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Whether uploaded documents may answer questions unrelated to the business (client admins may change it)."""
-    client.document_settings = {**document_settings(client), "answer_any_topic": body.answer_any_topic}
+    """Answering options (client admins may change them): off-topic documents and always-included key information."""
+    settings = document_settings(client)
+    if body.answer_any_topic is not None:
+        settings["answer_any_topic"] = body.answer_any_topic
+    if body.key_facts is not None:
+        settings["key_facts"] = body.key_facts.strip()
+    client.document_settings = settings
     db.commit()
     return {"settings": document_settings(client)}
 

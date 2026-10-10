@@ -291,7 +291,7 @@ function CrawlTab({ data, onSaved }: { data: SettingsData; onSaved: (d: Settings
           </Field>
         )}
         <Field label="Time of day" htmlFor="cs-time"><input id="cs-time" className="input" type="time" value={schedule.time} onChange={(e) => setSchedule({ ...schedule, time: e.target.value })} disabled={schedule.frequency === "off"} /></Field>
-        <Field label="Time zone" htmlFor="cs-tz" hint="IANA name, e.g. Asia/Kolkata, Europe/London, UTC."><input id="cs-tz" className="input" value={tz} onChange={(e) => setTz(e.target.value)} /></Field>
+        <Field label="Time zone" htmlFor="cs-tz" hint="IANA name, e.g. Asia/Kolkata, Europe/London, UTC. Also used for the current time in answers (“is it open now?”)."><input id="cs-tz" className="input" value={tz} onChange={(e) => setTz(e.target.value)} /></Field>
       </div>
       <div className="row end" style={{ marginTop: 14 }}><Button kind="primary" loading={busy} onClick={() => save({ crawl_schedule: schedule, timezone: tz })}>Save</Button></div>
     </Card>

@@ -136,12 +136,23 @@ def rrf_merge(lists: list[list[SearchHit]], k: int = RRF_K, limit: int = FINAL_K
     return sorted(merged.values(), key=lambda h: h.score, reverse=True)[:limit]
 
 
-def search(db: Session, embedder: Embedder, client_id: int, question: str, limit: int = FINAL_K) -> SearchResult:
-    query_vector = encode_queries(embedder, [question])[0]
-    vector_hits = _vector_search(db, client_id, query_vector, VECTOR_K)
-    text_hits = _text_search(db, client_id, question, TEXT_K)
+FOLLOW_UP_MAX_WORDS = 7
+
+
+def search(
+    db: Session, embedder: Embedder, client_id: int, question: str, limit: int = FINAL_K, previous_question: str | None = None
+) -> SearchResult:
+    """Hybrid search. A short follow-up ("is it open now?") is also searched together with the
+    previous question, so "it" finds what the visitor was just asking about."""
+    queries = [question]
+    if previous_question and len(words(question)) <= FOLLOW_UP_MAX_WORDS:
+        queries.append(f"{previous_question} {question}")
+    lists: list[list[SearchHit]] = []
+    for query, vector in zip(queries, encode_queries(embedder, queries), strict=True):
+        lists.append(_vector_search(db, client_id, vector, VECTOR_K))
+        lists.append(_text_search(db, client_id, query, TEXT_K))
     db.commit()  # end the transaction holding SET LOCAL
-    hits = rrf_merge([vector_hits, text_hits], limit=limit)
+    hits = rrf_merge(lists, limit=limit)
     # Chunks found only by keywords have no similarity yet; the best vector similarity
     # among the final hits is the confidence.
     sims = [h.similarity for h in hits if h.similarity is not None]

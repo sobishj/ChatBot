@@ -417,3 +417,37 @@ def test_deepinfra_provider_and_chat_model_filter(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     assert list_available_models("deepinfra", None, "di-key") == ["Qwen/Qwen3-235B-A22B-Instruct-2507"]
     assert seen == ["https://api.deepinfra.com/v1/openai/models"]
+
+
+def test_key_facts_subject_rule_and_current_time_in_prompt() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    shop = [SearchHit(1, "web", "https://x/pizza", "Pizza Hut", "Shop timings 10 AM to 9 PM")]
+    now = datetime(2026, 10, 10, 14, 5, tzinfo=ZoneInfo("Asia/Kolkata"))
+    system = build_messages("{context}", "Bot", "Lulu Mall", shop, [], "is it open now?", key_facts="Open daily 9 AM to 11 PM.", now=now)[0]["content"]
+    assert system.index("[0] Key information about Lulu Mall") < system.index("[1] Pizza Hut")  # key facts come first
+    assert "SUBJECT RULE" in system and "Lulu Mall's own opening hours" in system
+    assert "Current local time: Saturday, 10 October 2026, 14:05 (IST)" in system
+    assert "Key information" in build_messages("{context}", "Bot", "Acme", [], [], "hi", key_facts="Open 9-5")[0]["content"]  # even with no hits
+    assert "Key information" not in build_messages("{context}", "Bot", "Acme", shop, [], "hi")[0]["content"]
+
+
+def test_short_follow_up_is_also_searched_with_the_previous_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.search import hybrid
+
+    searched: list[str] = []
+    monkeypatch.setattr(hybrid, "_vector_search", lambda db, cid, vec, k: [])
+    monkeypatch.setattr(hybrid, "_text_search", lambda db, cid, q, k: searched.append(q) or [])
+
+    class Db:
+        def commit(self) -> None: ...
+
+    class Emb:
+        def encode(self, texts): return [[0.0] for _ in texts]
+
+    hybrid.search(Db(), Emb(), 1, "is it open now?", previous_question="Tell me about Pizza Hut")
+    assert searched == ["is it open now?", "Tell me about Pizza Hut is it open now?"]
+    searched.clear()
+    hybrid.search(Db(), Emb(), 1, "What are the parking charges for two wheelers on weekends?", previous_question="Pizza Hut")
+    assert searched == ["What are the parking charges for two wheelers on weekends?"]  # long question: on its own

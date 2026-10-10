@@ -59,6 +59,16 @@ class ChatResponse:
     actions_used: list[str] = field(default_factory=list)
 
 
+def local_now(timezone: str | None) -> datetime:
+    """Current time in the configured time zone (Settings), for questions like "is it open now?"."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return datetime.now(ZoneInfo(timezone or "UTC"))
+    except (ZoneInfoNotFoundError, ValueError):
+        return datetime.now(UTC)
+
+
 def normalize_question(text: str) -> str:
     """Lower-case, strip punctuation and extra spaces: groups 'Where is ASICS?' with 'where is asics'."""
     return " ".join(words(text))[:500]
@@ -132,19 +142,20 @@ def answer_question(
     started = time.perf_counter()
     question = mask_pii(message.strip())[:MAX_MESSAGE_CHARS]
     b = branding(client)
-    settings = get_settings_map(db, ["system_prompt", "confidence_threshold"])
+    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "timezone"])
     language = detect_language(question, b.get("default_language") or "en")
     response = ChatResponse(answer=UNAVAILABLE_ANSWER, language=language)
 
     try:
         embedder = embedder or get_embedder()
-        result = search(db, embedder, client.id, question)
+        history = load_history(db, client.id, session_id, channel)
+        result = search(db, embedder, client.id, question, previous_question=history[-1][0] if history else None)
         response.hits = result.hits
         response.confidence = round(result.confidence, 4)
-        history = load_history(db, client.id, session_id, channel)
+        doc_settings = document_settings(client)
         messages = build_messages(
             settings["system_prompt"], b["bot_name"], client.name, result.hits, history, question,
-            bool(document_settings(client).get("answer_any_topic")),
+            bool(doc_settings.get("answer_any_topic")), doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
         )
         primary, fallback = resolve_for_client(db, client)
         if primary is None:
