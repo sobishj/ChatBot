@@ -7,7 +7,7 @@ import { Icon } from "../../components/icons";
 import { approxTime, bytes, money, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
-interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; uploaded_at: string; indexed_at: string | null }
+interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; enabled: boolean; uploaded_at: string; indexed_at: string | null }
 interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; answer_any_topic: boolean }; watched_root: string; mode: string }
 
 /** Returned instead of starting indexing when the local embedding model would take very long. */
@@ -117,7 +117,13 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
         bodyless
       >
         {data.documents.length === 0 ? <Empty title="No documents yet">Upload files above{isSuper ? " or connect a watched folder below" : ""}.</Empty> : (
-          <DocTable docs={[...uploads, ...folder]} onDelete={(d) => run(async () => { await api(`/api/admin/clients/${client.client_id}/documents/${d.id}`, { method: "DELETE" }); await load(); reload(); }, "Document deleted")} />
+          <DocTable
+            docs={[...uploads, ...folder]}
+            onToggle={(d, enabled) => run(async () => {
+              const r = await api<{ document: Doc }>(`/api/admin/clients/${client.client_id}/documents/${d.id}/enabled`, { method: "PUT", body: { enabled } });
+              setData((cur) => cur && { ...cur, documents: cur.documents.map((x) => (x.id === d.id ? r.document : x)) });
+            }, enabled ? `The assistant uses ${d.filename} again` : `The assistant no longer answers from ${d.filename}`)}
+            onDelete={(d) => run(async () => { await api(`/api/admin/clients/${client.client_id}/documents/${d.id}`, { method: "DELETE" }); await load(); reload(); }, "Document deleted")} />
         )}
       </Card>
 
@@ -196,15 +202,19 @@ function LargeUploadDialog({ info, isSuper, onClose, onIndexLocal }: { info: Lar
   );
 }
 
-function DocTable({ docs, onDelete }: { docs: Doc[]; onDelete: (d: Doc) => void }) {
+function DocTable({ docs, onToggle, onDelete }: { docs: Doc[]; onToggle: (d: Doc, enabled: boolean) => void; onDelete: (d: Doc) => void }) {
   const [confirm, setConfirm] = useState<number | null>(null);
   return (
     <div className="table-wrap">
       <table className="table">
-        <thead><tr><th>File</th><th>Source</th><th className="num">Size</th><th>Status</th><th>Indexed</th><th /></tr></thead>
+        <thead><tr><th title="Untick to stop the assistant answering from this document">Use</th><th>File</th><th>Source</th><th className="num">Size</th><th>Status</th><th>Indexed</th><th /></tr></thead>
         <tbody>
           {docs.map((d) => (
-            <tr key={d.id}>
+            <tr key={d.id} style={{ opacity: d.enabled ? 1 : 0.55 }}>
+              <td style={{ width: 44 }}>
+                <input type="checkbox" checked={d.enabled} onChange={(e) => onToggle(d, e.target.checked)}
+                  aria-label={`Use ${d.filename} for answers`} title={d.enabled ? "Used for answers. Untick to ignore it." : "Ignored for answers. Tick to use it again."} />
+              </td>
               <td style={{ maxWidth: 380 }}><strong className="truncate" title={d.path}>{d.filename}</strong>{d.source === "folder" && d.path !== d.filename && <span className="small muted truncate">{d.path}</span>}{d.error && <div className="small" style={{ color: "var(--danger)" }}>{d.error}</div>}</td>
               <td>{d.source === "upload" ? <Badge>Uploaded</Badge> : <Badge color="blue">Folder</Badge>}</td>
               <td className="num">{bytes(d.size_bytes)}</td>

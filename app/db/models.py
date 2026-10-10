@@ -230,6 +230,8 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending|indexed|error
     error: Mapped[str | None] = mapped_column(Text)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Switched off in the Documents tab: stays indexed, but the assistant doesn't use it.
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     uploaded_at: Mapped[datetime] = _now_column()
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

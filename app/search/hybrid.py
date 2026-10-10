@@ -77,6 +77,10 @@ def keyword_query(question: str) -> str | None:
     return " | ".join("'" + t.replace("'", "''").replace("\\", "") + "'" for t in terms)
 
 
+# Chunks of documents switched off in the Documents tab are never used for answers.
+_ENABLED_ONLY = "AND (document_id IS NULL OR document_id NOT IN (SELECT id FROM documents WHERE client_id = :cid AND NOT enabled)) "
+
+
 def _vector_search(db: Session, client_id: int, query_vector: list[float], k: int) -> list[SearchHit]:
     try:
         # pgvector >= 0.8: keep scanning the HNSW index until enough rows pass the client filter.
@@ -89,7 +93,8 @@ def _vector_search(db: Session, client_id: int, query_vector: list[float], k: in
             "SELECT id, source_type, source, coalesce(title, ''), content, "
             "1 - (embedding <=> CAST(:q AS vector)) AS similarity "
             "FROM chunks WHERE client_id = :cid AND embedding IS NOT NULL "
-            "ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k"
+            + _ENABLED_ONLY
+            + "ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k"
         ),
         {"q": vector_literal(query_vector), "cid": client_id, "k": k},
     ).all()
@@ -106,7 +111,8 @@ def _text_search(db: Session, client_id: int, question: str, k: int) -> list[Sea
             "ts_rank_cd(content_tsv, q, 32) AS rank "
             "FROM chunks, to_tsquery('simple', :q) AS q "
             "WHERE client_id = :cid AND content_tsv @@ q "
-            "ORDER BY rank DESC, id LIMIT :k"
+            + _ENABLED_ONLY
+            + "ORDER BY rank DESC, id LIMIT :k"
         ),
         {"q": query, "cid": client_id, "k": k},
     ).all()

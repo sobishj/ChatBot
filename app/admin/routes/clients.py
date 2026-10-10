@@ -302,6 +302,23 @@ def remove_document(document_id: int, client: Client = Depends(get_client_for_us
     return {"ok": True}
 
 
+class DocEnabledIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/{client_id}/documents/{document_id}/enabled")
+def set_document_enabled(
+    document_id: int, body: DocEnabledIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Use or ignore one document for answers. It stays indexed, so switching back is instant."""
+    doc = db.get(Document, document_id)
+    if doc is None or doc.client_id != client.id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    doc.enabled = body.enabled
+    db.commit()
+    return {"document": document_to_dict(doc)}
+
+
 @router.post("/{client_id}/documents/reindex")
 def reindex_documents(client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     job = job_service.enqueue(db, "index_docs", client.id, payload={"force": True}, created_by_id=user.id)

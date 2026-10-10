@@ -278,6 +278,7 @@ def document_to_dict(doc: Document) -> dict[str, Any]:
         "status": doc.status,
         "error": doc.error,
         "chunk_count": doc.chunk_count,
+        "enabled": doc.enabled,
         "uploaded_at": doc.uploaded_at,
         "indexed_at": doc.indexed_at,
     }

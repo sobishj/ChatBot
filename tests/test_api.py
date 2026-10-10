@@ -233,3 +233,21 @@ def test_switch_between_single_and_multi_client_mode(db: Session, embedder, monk
     assert switch("onprem").json()["mode"] == "onprem"
     assert root.get("/api/admin/auth/me").json()["onprem_client_id"] == "client-a"
     assert switch("sideways").status_code == 400
+
+
+def test_document_enabled_toggle(db: Session, embedder, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    api = admin_client()
+    finish_setup(db, api, monkeypatch)
+    api.post("/api/admin/clients", json={"client_id": "docs", "name": "Docs", "website_url": "https://docs.test"})
+    up = api.post("/api/admin/clients/docs/documents", files={"files": ("a.txt", b"Parking costs 40 rupees.", "text/plain")}).json()
+    doc = up["saved"][0]
+    assert doc["enabled"] is True
+    off = api.put(f"/api/admin/clients/docs/documents/{doc['id']}/enabled", json={"enabled": False})
+    assert off.status_code == 200 and off.json()["document"]["enabled"] is False
+    listed = api.get("/api/admin/clients/docs/documents").json()["documents"]
+    assert listed[0]["enabled"] is False
+    assert api.put("/api/admin/clients/docs/documents/999999/enabled", json={"enabled": True}).status_code == 404

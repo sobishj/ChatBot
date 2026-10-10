@@ -223,3 +223,23 @@ def test_document_deleted_while_indexing_is_skipped(db: Session, embedder, make_
     assert stats["indexed"] == 1 and any("deleted while being indexed" in line for line in logs)
     db.refresh(kept)
     assert kept.status == "indexed" and db.get(Document, gone_id) is None
+
+
+@pytest.mark.integration
+def test_disabled_document_is_not_used_for_answers(db: Session, embedder, make_client, data_dirs: Path) -> None:
+    from app.search.hybrid import search
+
+    client = make_client()
+    doc = save_upload(db, client, "parking.pdf", io.BytesIO(make_pdf()))
+    sync_documents(db, client, embedder)
+    assert any(h.source == "parking.pdf" for h in search(db, embedder, client.id, "parking rupees per hour").hits)
+
+    doc.enabled = False
+    db.commit()
+    assert not search(db, embedder, client.id, "parking rupees per hour").hits  # neither vector nor keyword hits
+    db.refresh(doc)
+    assert doc.status == "indexed" and doc.chunk_count >= 1  # still indexed: switching back is instant
+
+    doc.enabled = True
+    db.commit()
+    assert search(db, embedder, client.id, "parking rupees per hour").hits
