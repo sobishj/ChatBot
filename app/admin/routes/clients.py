@@ -321,6 +321,18 @@ class DocSettingsIn(BaseModel):
     scan_interval_minutes: int | None = Field(default=None, ge=5, le=10080)
 
 
+class DocAnsweringIn(BaseModel):
+    answer_any_topic: bool
+
+
+@router.put("/{client_id}/documents/answering")
+def update_document_answering(body: DocAnsweringIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Whether uploaded documents may answer questions unrelated to the business (client admins may change it)."""
+    client.document_settings = {**document_settings(client), "answer_any_topic": body.answer_any_topic}
+    db.commit()
+    return {"settings": document_settings(client)}
+
+
 @router.put("/{client_id}/documents/settings")
 def update_document_settings(
     body: DocSettingsIn, client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)

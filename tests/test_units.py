@@ -383,9 +383,9 @@ def test_list_models_openai_compatible_and_errors(monkeypatch: pytest.MonkeyPatc
         list_available_models("openai", None, None)
 
 
-def test_documents_any_topic_rule_is_optional() -> None:
+def test_topic_rule_depends_on_the_documents_option() -> None:
     hits = [SearchHit(1, "doc", "letter.pdf", "Letter", "The road will be repaired after the new work starts.")]
-    plain = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?")
-    assert "ADDITIONAL RULE" not in plain[0]["content"]
-    wide = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?", documents_any_topic=True)
-    assert "ADDITIONAL RULE" in wide[0]["content"] and "Acme's business" in wide[0]["content"]
+    on_topic = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?")[0]["content"]
+    assert "TOPIC RULE" in on_topic and "ADDITIONAL RULE" not in on_topic  # default: keep to the business
+    any_topic = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?", documents_any_topic=True)[0]["content"]
+    assert "ADDITIONAL RULE" in any_topic and "TOPIC RULE" not in any_topic

@@ -246,11 +246,11 @@ middle (e.g. `docker compose up -d --build`), indexing, crawl and re-index jobs 
 automatically (up to 3 times; unchanged files are skipped). A document deleted while it is being
 indexed is skipped, and the rest of the job continues.
 
-**Off-topic documents.** By default the assistant answers like the business's own assistant.
-To let it answer any question an uploaded document covers, even one unrelated to the business
-(for example a letter or a manual on another subject), switch on **Settings → Answers & prompt
-→ Answer any question the uploaded documents cover**. Answers still come only from the client's
-own content.
+**Off-topic documents** (per client, on the Documents tab). By default the assistant only answers
+questions about the client's business and politely declines others, even when an uploaded
+document mentions them. To let it answer any question an uploaded document covers (for example
+a letter or a manual on another subject), switch on **Answer any question the uploaded documents
+cover**. Answers still come only from the client's own content.
 
 ## 7. AI models
 

@@ -8,7 +8,7 @@ import { approxTime, bytes, money, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
 interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; uploaded_at: string; indexed_at: string | null }
-interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null }; watched_root: string; mode: string }
+interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; answer_any_topic: boolean }; watched_root: string; mode: string }
 
 /** Returned instead of starting indexing when the local embedding model would take very long. */
 interface LargeUpload {
@@ -119,6 +119,24 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
         {data.documents.length === 0 ? <Empty title="No documents yet">Upload files above{isSuper ? " or connect a watched folder below" : ""}.</Empty> : (
           <DocTable docs={[...uploads, ...folder]} onDelete={(d) => run(async () => { await api(`/api/admin/clients/${client.client_id}/documents/${d.id}`, { method: "DELETE" }); await load(); reload(); }, "Document deleted")} />
         )}
+      </Card>
+
+      <Card title="Answering from documents">
+        <div className="stack">
+          <label className="check">
+            <input type="checkbox" checked={data.settings.answer_any_topic} disabled={busy}
+              onChange={(e) => run(async () => {
+                const r = await api<{ settings: DocsData["settings"] }>(`/api/admin/clients/${client.client_id}/documents/answering`, { method: "PUT", body: { answer_any_topic: e.target.checked } });
+                setData({ ...data, settings: r.settings });
+              }, e.target.checked ? "The assistant now answers anything the documents cover" : "The assistant now keeps to this client's business")} />
+            Answer any question the uploaded documents cover, even if it's unrelated to {client.name}
+          </label>
+          <p className="hint" style={{ margin: 0 }}>
+            Off (default): the assistant only answers questions about {client.name} and politely declines others, even when a document
+            mentions them. On: if an uploaded document answers the question (for example a letter or manual on another subject), it answers.
+            Answers always come from this client's own content, never from general knowledge.
+          </p>
+        </div>
       </Card>
 
       {(isSuper || data.settings.watch_path) && (

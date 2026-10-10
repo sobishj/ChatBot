@@ -23,7 +23,7 @@ from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, complete, complete_with_tools
 from app.search.hybrid import SearchHit, search, words
 from app.services.ai_models import resolve_for_client
-from app.services.clients import branding
+from app.services.clients import branding, document_settings
 from app.services.settings import get_settings_map
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def answer_question(
     started = time.perf_counter()
     question = mask_pii(message.strip())[:MAX_MESSAGE_CHARS]
     b = branding(client)
-    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "answer_any_document_topic"])
+    settings = get_settings_map(db, ["system_prompt", "confidence_threshold"])
     language = detect_language(question, b.get("default_language") or "en")
     response = ChatResponse(answer=UNAVAILABLE_ANSWER, language=language)
 
@@ -143,7 +143,8 @@ def answer_question(
         response.confidence = round(result.confidence, 4)
         history = load_history(db, client.id, session_id, channel)
         messages = build_messages(
-            settings["system_prompt"], b["bot_name"], client.name, result.hits, history, question, bool(settings["answer_any_document_topic"])
+            settings["system_prompt"], b["bot_name"], client.name, result.hits, history, question,
+            bool(document_settings(client).get("answer_any_topic")),
         )
         primary, fallback = resolve_for_client(db, client)
         if primary is None:

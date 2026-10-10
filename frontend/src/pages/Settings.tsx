@@ -32,7 +32,6 @@ interface SettingsData {
   system_prompt: string;
   default_system_prompt: string;
   confidence_threshold: number;
-  answer_any_document_topic: boolean;
   crawl_schedule: { frequency: "daily" | "weekly" | "off"; time: string; weekday: number };
   timezone: string;
   rate_limits: {
@@ -247,20 +246,6 @@ function AnswersTab({ data, onSaved }: { data: SettingsData; onSaved: (d: Settin
   const { busy: resetting, run } = useAction();
   return (
     <div className="stack">
-      <Card title="Uploaded documents" subtitle="Applies to every client.">
-        <div className="stack">
-          <label className="check">
-            <input type="checkbox" checked={data.answer_any_document_topic} disabled={busy}
-              onChange={(e) => save({ answer_any_document_topic: e.target.checked })} />
-            Answer any question the uploaded documents cover, even if it's unrelated to the business
-          </label>
-          <p className="hint" style={{ margin: 0 }}>
-            Off: the assistant sticks to what a business's own assistant would answer. On: if a client's uploaded document
-            answers the question (for example a letter, manual or policy on another subject), the assistant answers from it.
-            Answers still come only from the client's own content, never from general knowledge.
-          </p>
-        </div>
-      </Card>
       <Card title="Answer confidence threshold" subtitle="Questions whose best matching content scores below this are logged as unanswered.">
         <div className="row">
           <input type="range" min={0} max={1} step={0.01} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} style={{ width: 280 }} aria-label="Confidence threshold" />

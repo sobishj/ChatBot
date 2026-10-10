@@ -48,6 +48,12 @@ DOCUMENTS_ANY_TOPIC_RULE = (
     "not only {client_name}'s business. If such a document answers the visitor's question, answer it from the document "
     "even when the topic is unrelated to our business. Still use only what the document says."
 )
+ON_TOPIC_RULE = (
+    "TOPIC RULE: Only answer questions about {client_name}: our products, services, offers, locations, opening hours, "
+    "policies, contact details and other things a visitor would ask us. If the question is about something unrelated to "
+    "{client_name}'s business, politely say you can only help with questions about {client_name}, even if the CONTEXT "
+    "happens to contain related text (for example from an uploaded document), and add the tag [[NO_ANSWER]] at the very end."
+)
 
 
 def build_messages(
@@ -61,11 +67,12 @@ def build_messages(
 ) -> list[dict[str, str]]:
     """``history`` is a list of (question, answer) pairs, oldest first.
 
-    ``documents_any_topic`` (Settings → Answers) lets uploaded documents answer off-topic questions.
+    ``documents_any_topic`` (the client's Documents tab) lets uploaded documents answer questions on any
+    subject; otherwise the assistant keeps to the client's business.
     """
     system = render_system_prompt(template, bot_name, client_name, format_context(hits))
-    if documents_any_topic:
-        system += "\n\n" + DOCUMENTS_ANY_TOPIC_RULE.format(client_name=client_name)
+    rule = DOCUMENTS_ANY_TOPIC_RULE if documents_any_topic else ON_TOPIC_RULE
+    system += "\n\n" + rule.format(client_name=client_name)
     messages = [{"role": "system", "content": system}]
     for past_question, past_answer in history:
         messages.append({"role": "user", "content": past_question})

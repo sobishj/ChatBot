@@ -39,6 +39,8 @@ DEFAULT_DOCUMENT_SETTINGS: dict[str, Any] = {
     "watch_path": None,  # absolute path under WATCHED_DIR, or None
     "scan_interval_minutes": 60,
     "last_scan_at": None,
+    # Answer any question the uploaded documents cover, even off-topic; off keeps answers to the business.
+    "answer_any_topic": False,
 }
 
 

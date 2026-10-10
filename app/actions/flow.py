@@ -41,7 +41,7 @@ from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, ToolsUn
 from app.search.hybrid import search
 from app.services import rate_limit
 from app.services.ai_models import resolve_for_client
-from app.services.clients import branding
+from app.services.clients import branding, document_settings
 from app.services.settings import get_settings_map
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def answer_with_actions(
     question = tokenize_pii(message.strip(), vault)[:MAX_MESSAGE_CHARS]
     save_vault(db, client.id, session_id, vault)
     b = branding(client)
-    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "rate_limits", "mode", "answer_any_document_topic"])
+    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "rate_limits", "mode"])
     limits = settings["rate_limits"] or {}
     language = detect_language(question, b.get("default_language") or "en")
     response = ChatResponse(answer=UNAVAILABLE_ANSWER, language=language)
@@ -232,7 +232,8 @@ def answer_with_actions(
             result_search = search(db, embedder or get_embedder(), client.id, question)
             hits, confidence = result_search.hits, result_search.confidence
         messages: list[dict[str, Any]] = build_messages(
-            settings["system_prompt"], b["bot_name"], client.name, hits, history, question, bool(settings["answer_any_document_topic"])
+            settings["system_prompt"], b["bot_name"], client.name, hits, history, question,
+            bool(document_settings(client).get("answer_any_topic")),
         )
         plain_messages = [dict(m) for m in messages]
         messages[0]["content"] += "\n\n" + ACTIONS_PROMPT.format(client_name=client.name, today=date.today().strftime("%A, %d %B %Y"))

@@ -30,7 +30,6 @@ router = APIRouter(
 EDITABLE = [
     "system_prompt",
     "confidence_threshold",
-    "answer_any_document_topic",
     "crawl_schedule",
     "timezone",
     "rate_limits",
@@ -74,10 +73,6 @@ def _validate(key: str, value: Any) -> Any:
         if len(value) < 20:
             raise bad("The system prompt is too short.")
         return value[:20000]
-    if key == "answer_any_document_topic":
-        if not isinstance(value, bool):
-            raise bad("answer_any_document_topic must be true or false.")
-        return value
     if key == "confidence_threshold":
         v = float(value)
         if not 0 <= v <= 1:

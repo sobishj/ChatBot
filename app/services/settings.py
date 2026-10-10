@@ -45,8 +45,6 @@ DEFAULTS: dict[str, Any] = {
     "fallback_model_id": None,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
     "confidence_threshold": 0.5,
-    # Answer any question an uploaded document covers, even if it's unrelated to the client's business.
-    "answer_any_document_topic": False,
     # Embeddings
     "embedding": {
         "model": "BAAI/bge-m3",
