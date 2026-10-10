@@ -26,6 +26,9 @@ interface Answer {
 
 type Turn = { question: string; answer?: Answer; failed?: string; decided?: boolean };
 
+/** **bold** as the widget shows it; everything else stays plain text (no HTML from the model). */
+const withBold = (text: string) => text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
+
 const newSession = () => "test-" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
 
 export function TestChatTab({ client }: TabProps) {
@@ -73,7 +76,7 @@ export function TestChatTab({ client }: TabProps) {
                 <div className="bubble user">{t.question}</div>
                 {t.answer && (
                   <div className="bubble bot" style={{ cursor: "pointer", outline: selected === i ? "2px solid var(--accent-soft)" : undefined }} onClick={() => setSelected(i)}>
-                    {t.answer.answer}
+                    {withBold(t.answer.answer)}
                     {t.answer.sources.length > 0 && (
                       <div className="meta">
                         {t.answer.sources.map((s) => s.url ? <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : <span key={s.title}>📄 {s.title}</span>)}
