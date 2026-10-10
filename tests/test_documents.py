@@ -243,3 +243,11 @@ def test_disabled_document_is_not_used_for_answers(db: Session, embedder, make_c
     doc.enabled = True
     db.commit()
     assert search(db, embedder, client.id, "parking rupees per hour").hits
+
+
+def test_contents_page_dot_leaders_are_removed(tmp_path: Path) -> None:
+    f = tmp_path / "manual.txt"
+    f.write_text("1 Document Overview ........................ 3\n2 Methods . . . . . . . . 5\nVersion 1.2.3 costs 4.50.", encoding="utf-8")
+    text = read_document(f)
+    assert "....." not in text and ". . . ." not in text
+    assert "1 Document Overview … 3" in text and "Version 1.2.3 costs 4.50." in text  # normal dots are kept

@@ -44,9 +44,13 @@ def render_system_prompt(template: str, bot_name: str, client_name: str, context
 
 
 DOCUMENTS_ANY_TOPIC_RULE = (
-    "ADDITIONAL RULE: The CONTEXT may include uploaded documents (sources marked \"document:\") about any subject, "
-    "not only {client_name}'s business. If such a document answers the visitor's question, answer it from the document "
-    "even when the topic is unrelated to our business. Still use only what the document says."
+    "ADDITIONAL RULE: Besides {client_name}'s own information, the CONTEXT may include uploaded documents (sources marked "
+    "\"document:\") on other subjects, for example another product's manual or a letter. Answer any question these documents "
+    "cover, even if the subject is unrelated to {client_name}: summarise what they say about it, including partial information "
+    "(for example what a product or system does), instead of saying you have no information. For such subjects, explain the "
+    "documents' content neutrally instead of speaking as {client_name}, and don't call the subject another company. "
+    "When the documents describe the subject, answer directly: don't begin with a disclaimer such as \"I don't have "
+    "information about this\" or \"this isn't related to us\". Never add facts that are not in the CONTEXT."
 )
 ON_TOPIC_RULE = (
     "TOPIC RULE: Only answer questions about {client_name}: our products, services, offers, locations, opening hours, "

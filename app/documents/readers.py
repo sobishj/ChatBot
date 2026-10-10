@@ -25,6 +25,7 @@ OCR_PAGE_TIMEOUT = 180  # seconds
 PROGRESS_INTERVAL = 0.5  # seconds between progress reports (each one is a database write)
 
 Progress = Callable[[int, int], None]  # (pages read, total pages)
+_LEADER_RE = re.compile(r"(?:[ \t]*[.·•_…][ \t]*){5,}")  # dot leaders in contents pages
 
 
 class UnsupportedDocument(ValueError):
@@ -232,7 +233,8 @@ def read_document(path: Path, progress: Progress | None = None, should_stop: Cal
         raise
     except Exception as exc:  # noqa: BLE001 - corrupt files raise all kinds of errors
         raise UnsupportedDocument(f"Could not read the file ({exc.__class__.__name__}). Is it corrupt?") from exc
-    text = text.strip()
+    # Table-of-contents leaders ("Overview ........ 3") drown out the real words of a chunk in search.
+    text = _LEADER_RE.sub(" … ", text).strip()
     if not text:
         hint = ""
         if path.suffix.lower() == ".pdf":
