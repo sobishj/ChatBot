@@ -389,3 +389,31 @@ def test_topic_rule_depends_on_the_documents_option() -> None:
     assert "TOPIC RULE" in on_topic and "ADDITIONAL RULE" not in on_topic  # default: keep to the business
     any_topic = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?", documents_any_topic=True)[0]["content"]
     assert "ADDITIONAL RULE" in any_topic and "TOPIC RULE" not in any_topic
+
+
+def test_deepinfra_provider_and_chat_model_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.llm import client as llm_client
+    from app.llm.client import ModelConfig, _litellm_kwargs, list_available_models
+
+    llm_client._model_list_cache.clear()
+    deepinfra = PROVIDERS["deepinfra"]
+    assert deepinfra.default_base_url == "https://api.deepinfra.com/v1/openai" and deepinfra.needs_api_key
+    kwargs = _litellm_kwargs(ModelConfig(provider="deepinfra", model_name="Qwen/Qwen3-235B-A22B-Instruct-2507", api_key="di-key"))
+    assert kwargs["model"] == "deepinfra/Qwen/Qwen3-235B-A22B-Instruct-2507" and "api_base" not in kwargs
+
+    models = {"data": [
+        {"id": "Qwen/Qwen3-235B-A22B-Instruct-2507", "metadata": {"tags": ["chat"]}},
+        {"id": "Qwen/Qwen3-Embedding-0.6B", "metadata": {"tags": ["embed"]}},
+        {"id": "black-forest-labs/FLUX", "metadata": {"tags": ["image-gen"]}},
+    ]}
+    seen: list[str] = []
+
+    def fake_get(self, url, params=None, headers=None, timeout=None):
+        seen.append(url)
+        return httpx.Response(200, json=models, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    assert list_available_models("deepinfra", None, "di-key") == ["Qwen/Qwen3-235B-A22B-Instruct-2507"]
+    assert seen == ["https://api.deepinfra.com/v1/openai/models"]

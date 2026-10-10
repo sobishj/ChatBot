@@ -17,7 +17,7 @@ Everything is managed in a web admin UI. The terminal is needed once, to run `in
                                      └──────────────┬───────────────────────────────┘
                                                     │ LiteLLM
                                    any LLM: OpenAI, Claude, Gemini, Kimi, DeepSeek,
-                                   Mistral, Groq, OpenRouter, Bionic/Ollama/vLLM/LM Studio
+                                   Mistral, Groq, OpenRouter, DeepInfra, Bionic/Ollama/vLLM/LM Studio
 ```
 
 **How an answer is made:** the question is masked (phone numbers and emails removed). Then
@@ -268,6 +268,7 @@ models without restarting anything.
 | Google (Gemini) | `https://generativelanguage.googleapis.com` | `gemini-3.5-flash` |
 | Moonshot (Kimi) | `https://api.moonshot.ai/v1` | `kimi-k2-0905-preview` |
 | DeepSeek / Mistral / Groq / OpenRouter | pre-filled | see the provider's docs |
+| DeepInfra (Qwen, Llama and other open models, no GPU needed) | `https://api.deepinfra.com/v1/openai` | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
 | **Bionic**, Ollama, vLLM, LM Studio, other OpenAI-compatible | `http://host.docker.internal:<port>/v1` | e.g. `qwen2.5-7b-instruct` |
 
 - **Test connection** sends a small prompt and shows the reply and the response time, or the

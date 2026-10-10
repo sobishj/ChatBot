@@ -371,7 +371,11 @@ def _fetch_model_list(provider_key: str, base: str, api_key: str | None, timeout
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             resp = http.get(f"{base}/models", timeout=timeout, headers=headers)
             resp.raise_for_status()
-            names = [m["id"] for m in resp.json().get("data", [])]
+            items = resp.json().get("data", [])
+            # Some providers (e.g. DeepInfra) tag each model; keep only chat models when they do.
+            if any("chat" in ((m.get("metadata") or {}).get("tags") or []) for m in items):
+                items = [m for m in items if "chat" in ((m.get("metadata") or {}).get("tags") or [])]
+            names = [m["id"] for m in items]
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         if code in (401, 403):

@@ -36,6 +36,8 @@ PROVIDERS: dict[str, Provider] = {
         Provider("mistral", "Mistral", "mistral", "https://api.mistral.ai/v1", True, True, "mistral-small-latest"),
         Provider("groq", "Groq", "groq", "https://api.groq.com/openai/v1", True, True, "llama-3.3-70b-versatile"),
         Provider("openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1", True, True, "openai/gpt-4o-mini"),
+        # Hosted open models (Qwen, Llama, DeepSeek …): run Qwen without a GPU of your own.
+        Provider("deepinfra", "DeepInfra (Qwen, Llama and other open models)", "deepinfra", "https://api.deepinfra.com/v1/openai", True, True, "Qwen/Qwen3-235B-A22B-Instruct-2507"),
         Provider("bionic", "Bionic (local, OpenAI-compatible)", "openai", "http://host.docker.internal:7800/v1", False, False, "qwen", True),
         Provider("ollama", "Ollama (local)", "openai", "http://host.docker.internal:11434/v1", False, False, "qwen2.5:7b", True),
         Provider("vllm", "vLLM (local)", "openai", "http://host.docker.internal:8000/v1", False, False, "Qwen/Qwen2.5-7B-Instruct", True),
