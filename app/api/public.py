@@ -30,7 +30,7 @@ from app.chat.service import answer_question
 from app.db.models import Client
 from app.db.session import get_db, session_scope
 from app.services import rate_limit
-from app.services.clients import get_by_slug, origin_allowed, public_config
+from app.services.clients import branding, get_by_slug, origin_allowed, public_config
 from app.services.settings import get_setting
 
 router = APIRouter(tags=["public"])
@@ -80,6 +80,8 @@ def _client_for_origin(db: Session, client_id: str, request: Request) -> tuple[C
     client = get_by_slug(db, client_id)
     if client is None or not client.active:
         raise HTTPException(status_code=404, detail="Unknown client.")
+    if not branding(client)["widget_enabled"]:  # switched off: the widget stays hidden
+        raise HTTPException(status_code=404, detail="The chatbot is switched off.")
     origin = request_origin(request)
     if not origin_allowed(origin, client.allowed_domains or []):
         raise HTTPException(status_code=403, detail="This website is not allowed to use this assistant.")

@@ -69,7 +69,12 @@ export function ClientDetail() {
         crumbs={mode === "onprem" ? undefined : <Link to="/clients">Clients</Link>}
         title={client.name}
         description={client.website_url ?? undefined}
-        actions={client.active ? <Badge color="green"><span className="dot" />Active</Badge> : <Badge><span className="dot" />Inactive</Badge>}
+        actions={
+          <span className="row" style={{ gap: 6 }}>
+            {client.branding.widget_enabled === false && <Badge color="red">Chatbot off</Badge>}
+            {client.active ? <Badge color="green"><span className="dot" />Active</Badge> : <Badge><span className="dot" />Inactive</Badge>}
+          </span>
+        }
       />
       <Tabs tabs={tabs.map((t) => ({ key: t.key, label: t.label }))} value={current} onChange={(k) => navigate(`/clients/${client.client_id}/${k}`)} />
       {current === "overview" && <OverviewTab {...props} />}

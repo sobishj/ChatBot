@@ -183,6 +183,10 @@ The client detail page has these tabs:
 | Stats | Questions over 7/30/90 days, top 20 questions, unanswered questions, per-day chart, languages, tokens and cost |
 | Conversations | Searchable question/answer log (personal data masked), CSV export |
 
+**Chatbot on/off.** The switch at the top of a client's **Overview** tab turns the chatbot on the
+website on or off. While it is off, the chat bubble doesn't appear and the public chat API
+refuses messages; **Test chat** keeps working, and nothing else changes (content, settings, crawls).
+
 ## 5. Website crawling
 
 **Crawl now** (Website tab) queues a job for the worker:

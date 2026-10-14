@@ -121,6 +121,7 @@ export interface Job {
 }
 
 export interface Branding {
+  widget_enabled: boolean;
   bot_name: string;
   primary_color: string;
   greeting: string;

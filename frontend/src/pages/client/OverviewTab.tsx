@@ -14,8 +14,26 @@ export function OverviewTab({ client, reload, isSuper }: TabProps) {
   const [website, setWebsite] = useState(client.website_url ?? "");
   const nothingIndexed = client.chunks === 0;
 
+  const chatbotOn = client.branding.widget_enabled !== false;
   return (
     <div className="stack">
+      <Card>
+        <div className="row between">
+          <label className="check switch" style={{ fontSize: 15 }}>
+            <input type="checkbox" role="switch" checked={chatbotOn} disabled={busy}
+              onChange={(e) => run(async () => { await api(`/api/admin/clients/${client.client_id}/branding`, { method: "PUT", body: { widget_enabled: e.target.checked } }); await reload(); },
+                e.target.checked ? "Chatbot switched on: the chat bubble is back on the website" : "Chatbot switched off: the chat bubble is hidden on the website")} />
+            Chatbot on the website
+          </label>
+          {chatbotOn ? <Badge color="green">On</Badge> : <Badge color="red">Off</Badge>}
+        </div>
+        <p className="hint" style={{ margin: "8px 0 0" }}>
+          {chatbotOn
+            ? "Visitors see the chat bubble and can ask questions."
+            : "Switched off: the chat bubble doesn't appear on the website and visitors can't chat. Test chat still works here."}
+        </p>
+      </Card>
+
       {nothingIndexed && (
         <Alert kind="info">
           No content indexed yet. Go to <strong>Website</strong> and press <strong>Crawl now</strong>, or upload files under <strong>Documents</strong>.

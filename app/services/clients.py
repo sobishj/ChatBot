@@ -17,6 +17,7 @@ SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 DEFAULT_BRANDING: dict[str, Any] = {
+    "widget_enabled": True,  # off: no chat bubble on the website and the public chat API refuses messages
     "bot_name": "Assistant",
     "primary_color": "#1f5f5b",
     "greeting": "Hi! How can I help you today?",
@@ -179,7 +180,7 @@ def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
         elif key == "position":
             if value not in ("left", "right"):
                 raise ClientError("Position must be left or right.")
-        elif key == "powered_by":
+        elif key in ("powered_by", "widget_enabled"):
             value = bool(value)
         elif key == "powered_by_url":
             value = normalize_url(value) if value else ""

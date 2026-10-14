@@ -256,3 +256,20 @@ def test_document_enabled_toggle(db: Session, embedder, monkeypatch: pytest.Monk
     assert len(on) == 2 and all(d["enabled"] for d in on)
     off = api.put("/api/admin/clients/docs/documents/enabled", json={"enabled": False}).json()["documents"]
     assert not any(d["enabled"] for d in off)
+
+
+def test_chatbot_switched_off_hides_widget_but_test_chat_works(db: Session, mall, fake_llm: FakeLLM, monkeypatch: pytest.MonkeyPatch) -> None:
+    public = TestClient(create_public_app())
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).status_code == 200
+    root = admin_client()
+    finish_setup(db, root, monkeypatch)
+    assert root.put("/api/admin/clients/mall/branding", json={"widget_enabled": False}).status_code == 200
+
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).status_code == 404  # widget stays hidden
+    body = {"client_id": "mall", "session_id": "switched-off-1", "message": "Hi"}
+    assert public.post("/api/chat", headers={"Origin": ORIGIN}, json=body).status_code == 404
+    assert public.post("/api/chat/stream", headers={"Origin": ORIGIN}, json=body).status_code == 404
+    assert root.post("/api/admin/clients/mall/test-chat", json={"session_id": "test-off-1", "message": "Hi"}).status_code == 200
+
+    root.put("/api/admin/clients/mall/branding", json={"widget_enabled": True})
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).status_code == 200
