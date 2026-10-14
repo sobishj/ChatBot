@@ -235,7 +235,7 @@ def answer_with_actions(
         doc_settings = document_settings(client)
         messages: list[dict[str, Any]] = build_messages(
             settings["system_prompt"], b["bot_name"], client.name, hits, history, question,
-            bool(doc_settings.get("answer_any_topic")), doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
+            doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
         )
         plain_messages = [dict(m) for m in messages]
         messages[0]["content"] += "\n\n" + ACTIONS_PROMPT.format(client_name=client.name, today=date.today().strftime("%A, %d %B %Y"))

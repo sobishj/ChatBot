@@ -246,15 +246,14 @@ middle (e.g. `docker compose up -d --build`), indexing, crawl and re-index jobs 
 automatically (up to 3 times; unchanged files are skipped). A document deleted while it is being
 indexed is skipped, and the rest of the job continues.
 
-**Use / ignore a document.** Each document has a **Use** checkbox (ticked by default). Untick it
-and the assistant stops answering from that document at once; it stays indexed, so ticking it
-again is instant. Useful for drafts, outdated versions or internal files.
+**Use / ignore a document.** Each document has a **Use** checkbox (ticked by default); the box
+in the column header ticks or unticks all of them at once. The assistant answers from every
+ticked document, whatever its subject (for example a manual for another product or a letter),
+and never from unticked ones. Unticked documents stay indexed, so ticking them again is instant.
+Useful for drafts, outdated versions, internal files, or documents you don't want answered from.
 
-**Off-topic documents** (per client, on the Documents tab). By default the assistant only answers
-questions about the client's business and politely declines others, even when an uploaded
-document mentions them. To let it answer any question an uploaded document covers (for example
-a letter or a manual on another subject), switch on **Answer any question the uploaded documents
-cover**. Answers still come only from the client's own content.
+**Key information** (Documents → Answering) is always given to the assistant, whatever search
+finds: put the business's opening hours, address and contact details there.
 
 ## 7. AI models
 

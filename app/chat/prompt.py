@@ -48,25 +48,23 @@ def render_system_prompt(template: str, bot_name: str, client_name: str, context
     return f"{prompt}\n\nCONTEXT:\n{context}"
 
 
-DOCUMENTS_ANY_TOPIC_RULE = (
+# Which documents may be used is chosen per document (the Use checkbox): every enabled document
+# may answer questions on its subject, even one unrelated to the business.
+DOCUMENTS_RULE = (
     "ADDITIONAL RULE: Besides {client_name}'s own information, the CONTEXT may include uploaded documents (sources marked "
     "\"document:\") on other subjects, for example another product's manual or a letter. Answer any question these documents "
     "cover, even if the subject is unrelated to {client_name}: summarise what they say about it, including partial information "
     "(for example what a product or system does), instead of saying you have no information. For such subjects, explain the "
     "documents' content neutrally instead of speaking as {client_name}, and don't call the subject another company. "
     "When the documents describe the subject, answer directly: don't begin with a disclaimer such as \"I don't have "
-    "information about this\" or \"this isn't related to us\". Never add facts that are not in the CONTEXT."
+    "information about this\" or \"this isn't related to us\". This includes documents about a part of the subject: for "
+    "example, if the visitor asks \"what is X?\" and a document describes X's API, wrapper or manual, answer with what it "
+    "says about X. Never add facts that are not in the CONTEXT."
 )
 SUBJECT_RULE = (
     "SUBJECT RULE: When the visitor doesn't say which shop, product or service they mean and it isn't clear from the "
     "conversation, they mean {client_name} itself: for example \"is it open?\" asks about {client_name}'s own opening hours, "
     "not a shop's. Only give details of an individual shop, product or service when the visitor asks about it."
-)
-ON_TOPIC_RULE = (
-    "TOPIC RULE: Only answer questions about {client_name}: our products, services, offers, locations, opening hours, "
-    "policies, contact details and other things a visitor would ask us. If the question is about something unrelated to "
-    "{client_name}'s business, politely say you can only help with questions about {client_name}, even if the CONTEXT "
-    "happens to contain related text (for example from an uploaded document), and add the tag [[NO_ANSWER]] at the very end."
 )
 
 
@@ -77,19 +75,13 @@ def build_messages(
     hits: list[SearchHit],
     history: list[tuple[str, str]],
     question: str,
-    documents_any_topic: bool = False,
     key_facts: str = "",
     now: datetime | None = None,
 ) -> list[dict[str, str]]:
-    """``history`` is a list of (question, answer) pairs, oldest first.
-
-    ``documents_any_topic`` (the client's Documents tab) lets uploaded documents answer questions on any
-    subject; otherwise the assistant keeps to the client's business.
-    """
+    """``history`` is a list of (question, answer) pairs, oldest first."""
     context = format_context(hits, key_facts, client_name)
     system = render_system_prompt(template, bot_name, client_name, context, now.date() if now else None)
-    rule = DOCUMENTS_ANY_TOPIC_RULE if documents_any_topic else ON_TOPIC_RULE
-    system += "\n\n" + SUBJECT_RULE.format(client_name=client_name) + "\n\n" + rule.format(client_name=client_name)
+    system += "\n\n" + SUBJECT_RULE.format(client_name=client_name) + "\n\n" + DOCUMENTS_RULE.format(client_name=client_name)
     if now is not None:  # lets the assistant answer "is it open now?"
         system += f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname() or 'local'})."
     messages = [{"role": "system", "content": system}]
@@ -110,10 +102,15 @@ _NO_INFO_RE = re.compile(
 )
 
 
+NO_INFO_MAX_CHARS = 300
+
+
 def parse_answer(raw: str) -> tuple[str, bool]:
     """Return (clean answer, model_said_no_answer)."""
-    flagged = bool(_NO_ANSWER_RE.search(raw)) or bool(_NO_INFO_RE.search(raw))
     clean = _NO_ANSWER_RE.sub("", raw).strip()
     # Some models wrap their reply in thinking tags; never show those.
     clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
+    # The "I don't have information" phrasing only counts for short replies: a long reply that opens
+    # with a caveat and then answers from the content is an answer.
+    flagged = bool(_NO_ANSWER_RE.search(raw)) or (bool(_NO_INFO_RE.search(clean)) and len(clean) < NO_INFO_MAX_CHARS)
     return clean, flagged

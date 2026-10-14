@@ -383,12 +383,11 @@ def test_list_models_openai_compatible_and_errors(monkeypatch: pytest.MonkeyPatc
         list_available_models("openai", None, None)
 
 
-def test_topic_rule_depends_on_the_documents_option() -> None:
+def test_enabled_documents_may_answer_any_subject() -> None:
     hits = [SearchHit(1, "doc", "letter.pdf", "Letter", "The road will be repaired after the new work starts.")]
-    on_topic = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?")[0]["content"]
-    assert "TOPIC RULE" in on_topic and "ADDITIONAL RULE" not in on_topic  # default: keep to the business
-    any_topic = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?", documents_any_topic=True)[0]["content"]
-    assert "ADDITIONAL RULE" in any_topic and "TOPIC RULE" not in any_topic
+    system = build_messages("{context}", "Bot", "Acme", hits, [], "When is the road repaired?")[0]["content"]
+    assert "ADDITIONAL RULE" in system and "even if the subject is unrelated to Acme" in system
+    assert "TOPIC RULE" not in system  # which documents count is chosen per document (Use checkbox)
 
 
 def test_deepinfra_provider_and_chat_model_filter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -451,3 +450,11 @@ def test_short_follow_up_is_also_searched_with_the_previous_question(monkeypatch
     searched.clear()
     hybrid.search(Db(), Emb(), 1, "What are the parking charges for two wheelers on weekends?", previous_question="Pizza Hut")
     assert searched == ["What are the parking charges for two wheelers on weekends?"]  # long question: on its own
+
+
+def test_long_answer_with_a_caveat_still_counts_as_answered() -> None:
+    caveat = "I don't have information about KonfiPay itself. However, the documentation describes the KonfiPay Wrapper API: "
+    _text, flagged = parse_answer(caveat + "it handles authentication, payments, bank accounts and file handling. " * 4)
+    assert not flagged
+    assert parse_answer("Sorry, I don't have information about the weather.")[1]  # short refusal: unanswered
+    assert parse_answer("Long answer " * 50 + NO_ANSWER_TAG)[1]  # the model's own tag always counts

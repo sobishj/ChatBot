@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.admin.deps import get_client_for_user, require_setup_completed, require_super_admin, require_user
@@ -306,6 +306,15 @@ class DocEnabledIn(BaseModel):
     enabled: bool
 
 
+@router.put("/{client_id}/documents/enabled")
+def set_all_documents_enabled(body: DocEnabledIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Use or ignore every document of the client at once."""
+    db.execute(update(Document).where(Document.client_id == client.id).values(enabled=body.enabled))
+    db.commit()
+    docs = db.scalars(select(Document).where(Document.client_id == client.id).order_by(Document.source, Document.path))
+    return {"documents": [document_to_dict(d) for d in docs]}
+
+
 @router.put("/{client_id}/documents/{document_id}/enabled")
 def set_document_enabled(
     document_id: int, body: DocEnabledIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)
@@ -339,16 +348,13 @@ class DocSettingsIn(BaseModel):
 
 
 class DocAnsweringIn(BaseModel):
-    answer_any_topic: bool | None = None
     key_facts: str | None = Field(default=None, max_length=4000)
 
 
 @router.put("/{client_id}/documents/answering")
 def update_document_answering(body: DocAnsweringIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Answering options (client admins may change them): off-topic documents and always-included key information."""
+    """Always-included key information (client admins may change it)."""
     settings = document_settings(client)
-    if body.answer_any_topic is not None:
-        settings["answer_any_topic"] = body.answer_any_topic
     if body.key_facts is not None:
         settings["key_facts"] = body.key_facts.strip()
     client.document_settings = settings

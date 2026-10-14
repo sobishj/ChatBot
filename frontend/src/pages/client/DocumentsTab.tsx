@@ -8,7 +8,7 @@ import { approxTime, bytes, money, num, relative } from "../../format";
 import type { TabProps } from "./ClientDetail";
 
 interface Doc { id: number; source: "upload" | "folder"; path: string; filename: string; size_bytes: number; status: string; error: string | null; chunk_count: number; enabled: boolean; uploaded_at: string; indexed_at: string | null }
-interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; answer_any_topic: boolean; key_facts: string }; watched_root: string; mode: string }
+interface DocsData { documents: Doc[]; settings: { watch_path: string | null; scan_interval_minutes: number; last_scan_at: string | null; key_facts: string }; watched_root: string; mode: string }
 
 /** Returned instead of starting indexing when the local embedding model would take very long. */
 interface LargeUpload {
@@ -123,6 +123,10 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
               const r = await api<{ document: Doc }>(`/api/admin/clients/${client.client_id}/documents/${d.id}/enabled`, { method: "PUT", body: { enabled } });
               setData((cur) => cur && { ...cur, documents: cur.documents.map((x) => (x.id === d.id ? r.document : x)) });
             }, enabled ? `The assistant uses ${d.filename} again` : `The assistant no longer answers from ${d.filename}`)}
+            onToggleAll={(enabled) => run(async () => {
+              const r = await api<{ documents: Doc[] }>(`/api/admin/clients/${client.client_id}/documents/enabled`, { method: "PUT", body: { enabled } });
+              setData((cur) => cur && { ...cur, documents: r.documents });
+            }, enabled ? "The assistant uses all documents" : "The assistant no longer answers from any document")}
             onDelete={(d) => run(async () => { await api(`/api/admin/clients/${client.client_id}/documents/${d.id}`, { method: "DELETE" }); await load(); reload(); }, "Document deleted")} />
         )}
       </Card>
@@ -130,19 +134,6 @@ export function DocumentsTab({ client, reload, isSuper }: TabProps) {
       <Card title="Answering">
         <div className="stack">
           <KeyFacts client={client} value={data.settings.key_facts} onSaved={(settings) => setData({ ...data, settings })} />
-          <label className="check">
-            <input type="checkbox" checked={data.settings.answer_any_topic} disabled={busy}
-              onChange={(e) => run(async () => {
-                const r = await api<{ settings: DocsData["settings"] }>(`/api/admin/clients/${client.client_id}/documents/answering`, { method: "PUT", body: { answer_any_topic: e.target.checked } });
-                setData({ ...data, settings: r.settings });
-              }, e.target.checked ? "The assistant now answers anything the documents cover" : "The assistant now keeps to this client's business")} />
-            Answer any question the uploaded documents cover, even if it's unrelated to {client.name}
-          </label>
-          <p className="hint" style={{ margin: 0 }}>
-            Off (default): the assistant only answers questions about {client.name} and politely declines others, even when a document
-            mentions them. On: if an uploaded document answers the question (for example a letter or manual on another subject), it answers.
-            Answers always come from this client's own content, never from general knowledge.
-          </p>
         </div>
       </Card>
 
@@ -224,12 +215,23 @@ function KeyFacts({ client, value, onSaved }: { client: TabProps["client"]; valu
   );
 }
 
-function DocTable({ docs, onToggle, onDelete }: { docs: Doc[]; onToggle: (d: Doc, enabled: boolean) => void; onDelete: (d: Doc) => void }) {
+function DocTable({ docs, onToggle, onToggleAll, onDelete }: { docs: Doc[]; onToggle: (d: Doc, enabled: boolean) => void; onToggleAll: (enabled: boolean) => void; onDelete: (d: Doc) => void }) {
+  const used = docs.filter((d) => d.enabled).length;
+  const allBox = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (allBox.current) allBox.current.indeterminate = used > 0 && used < docs.length; // some ticked: show a dash
+  }, [used, docs.length]);
   const [confirm, setConfirm] = useState<number | null>(null);
   return (
     <div className="table-wrap">
       <table className="table">
-        <thead><tr><th title="Untick to stop the assistant answering from this document">Use</th><th>File</th><th>Source</th><th className="num">Size</th><th>Status</th><th>Indexed</th><th /></tr></thead>
+        <thead><tr><th title="Untick to stop the assistant answering from a document">
+          <label className="check" style={{ gap: 6 }}>
+            <input ref={allBox} type="checkbox" checked={docs.length > 0 && used === docs.length}
+              onChange={(e) => onToggleAll(e.target.checked)} aria-label={used === docs.length ? "Ignore all documents" : "Use all documents"} />
+            Use
+          </label>
+        </th><th>File</th><th>Source</th><th className="num">Size</th><th>Status</th><th>Indexed</th><th /></tr></thead>
         <tbody>
           {docs.map((d) => (
             <tr key={d.id} style={{ opacity: d.enabled ? 1 : 0.55 }}>

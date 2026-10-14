@@ -251,3 +251,8 @@ def test_document_enabled_toggle(db: Session, embedder, monkeypatch: pytest.Monk
     listed = api.get("/api/admin/clients/docs/documents").json()["documents"]
     assert listed[0]["enabled"] is False
     assert api.put("/api/admin/clients/docs/documents/999999/enabled", json={"enabled": True}).status_code == 404
+    api.post("/api/admin/clients/docs/documents", files={"files": ("b.txt", b"Parking is free on Sundays.", "text/plain")})
+    on = api.put("/api/admin/clients/docs/documents/enabled", json={"enabled": True}).json()["documents"]
+    assert len(on) == 2 and all(d["enabled"] for d in on)
+    off = api.put("/api/admin/clients/docs/documents/enabled", json={"enabled": False}).json()["documents"]
+    assert not any(d["enabled"] for d in off)

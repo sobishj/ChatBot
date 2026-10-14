@@ -155,7 +155,7 @@ def answer_question(
         doc_settings = document_settings(client)
         messages = build_messages(
             settings["system_prompt"], b["bot_name"], client.name, result.hits, history, question,
-            bool(doc_settings.get("answer_any_topic")), doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
+            doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
         )
         primary, fallback = resolve_for_client(db, client)
         if primary is None:
