@@ -458,3 +458,30 @@ def test_long_answer_with_a_caveat_still_counts_as_answered() -> None:
     assert not flagged
     assert parse_answer("Sorry, I don't have information about the weather.")[1]  # short refusal: unanswered
     assert parse_answer("Long answer " * 50 + NO_ANSWER_TAG)[1]  # the model's own tag always counts
+
+
+def test_list_questions_get_more_results() -> None:
+    from app.search.hybrid import is_list_question
+
+    assert is_list_question("which footwear shops are there?") and is_list_question("List all restaurants")
+    assert is_list_question("what brands do you have for shoes") and is_list_question("any shoe stores here?")
+    assert not is_list_question("is it open now?") and not is_list_question("where is skechers?")
+
+
+def test_thinking_is_switched_off_for_quick_answers_where_the_model_allows() -> None:
+    from app.llm.client import THINKING_HEADROOM, ModelConfig, _request_kwargs
+
+    haiku = ModelConfig(provider="anthropic", model_name="claude-haiku-5-5", api_key="k", max_tokens=600)
+    kwargs, cap = _request_kwargs(haiku, None)
+    assert kwargs["thinking"] == {"type": "disabled"} and kwargs["allowed_openai_params"] == ["thinking"] and cap == 600
+    deep_kwargs, deep_cap = _request_kwargs(ModelConfig(**{**haiku.__dict__, "deep": True}), None)
+    assert "thinking" not in deep_kwargs and deep_cap == 600 + THINKING_HEADROOM  # list questions may reason
+    tools_kwargs, tools_cap = _request_kwargs(haiku, None, allow_quick=False)
+    assert "thinking" not in tools_kwargs and tools_cap == 600 + THINKING_HEADROOM  # tool calling keeps thinking
+
+    sonnet = _request_kwargs(ModelConfig(provider="anthropic", model_name="claude-sonnet-5-5", api_key="k"), None)[0]
+    assert sonnet["thinking"] == {"type": "between_tools"}
+    opus, opus_cap = _request_kwargs(ModelConfig(provider="anthropic", model_name="claude-opus-5-5", api_key="k", max_tokens=600), None)
+    assert "thinking" not in opus and opus_cap == 600 + THINKING_HEADROOM  # can't switch off: room to think instead
+    gpt, gpt_cap = _request_kwargs(ModelConfig(provider="openai", model_name="gpt-4o-mini", api_key="k", max_tokens=600), None)
+    assert "thinking" not in gpt and gpt_cap == 600 and gpt["temperature"] == 0.2

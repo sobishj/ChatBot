@@ -32,13 +32,14 @@ from app.actions.pending import (
     set_pending,
 )
 from app.actions.schema import tools_for
+from app.chat.essentials import key_information, page_directory
 from app.chat.language import detect_language
 from app.chat.pii import tokenize_pii
 from app.chat.prompt import build_messages, parse_answer
 from app.db.models import ActionCall, Client, ClientAction
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, ToolsUnsupported
-from app.search.hybrid import search
+from app.search.hybrid import is_list_question, search
 from app.services import rate_limit
 from app.services.ai_models import resolve_for_client
 from app.services.clients import branding, document_settings
@@ -235,7 +236,8 @@ def answer_with_actions(
         doc_settings = document_settings(client)
         messages: list[dict[str, Any]] = build_messages(
             settings["system_prompt"], b["bot_name"], client.name, hits, history, question,
-            doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
+            key_information(db, client.id, doc_settings.get("key_facts") or ""), local_now(settings["timezone"]),
+            page_directory(db, client.id) if is_list_question(question) else "",
         )
         plain_messages = [dict(m) for m in messages]
         messages[0]["content"] += "\n\n" + ACTIONS_PROMPT.format(client_name=client.name, today=date.today().strftime("%A, %d %B %Y"))

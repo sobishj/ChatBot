@@ -14,6 +14,7 @@ by ``client_id``.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -27,6 +28,18 @@ from app.indexer.indexer import vector_literal
 VECTOR_K = 20
 TEXT_K = 20
 FINAL_K = 6
+# "Which shops sell shoes?" needs many pages (one per shop), not the best six.
+LIST_K = 16
+_LIST_RE = re.compile(
+    r"\b(?:which|what|list|all|any|how many)\b.*\b(?:shops?|stores?|brands?|outlets?|restaurants?|cafes?|places|options|"
+    r"products|services|doctors|departments|courses|rooms|events|offers)\b"
+    r"|\b(?:shops|stores|brands|outlets|restaurants)\b",
+    re.IGNORECASE,
+)
+
+
+def is_list_question(question: str) -> bool:
+    return bool(_LIST_RE.search(question))
 RRF_K = 60
 
 # Very common words that carry no meaning for keyword search (English + a few others).
@@ -140,17 +153,20 @@ FOLLOW_UP_MAX_WORDS = 7
 
 
 def search(
-    db: Session, embedder: Embedder, client_id: int, question: str, limit: int = FINAL_K, previous_question: str | None = None
+    db: Session, embedder: Embedder, client_id: int, question: str, limit: int | None = None, previous_question: str | None = None
 ) -> SearchResult:
     """Hybrid search. A short follow-up ("is it open now?") is also searched together with the
     previous question, so "it" finds what the visitor was just asking about."""
+    if limit is None:
+        limit = LIST_K if is_list_question(question) else FINAL_K
+    candidates = max(VECTOR_K, limit * 2)
     queries = [question]
     if previous_question and len(words(question)) <= FOLLOW_UP_MAX_WORDS:
         queries.append(f"{previous_question} {question}")
     lists: list[list[SearchHit]] = []
     for query, vector in zip(queries, encode_queries(embedder, queries), strict=True):
-        lists.append(_vector_search(db, client_id, vector, VECTOR_K))
-        lists.append(_text_search(db, client_id, query, TEXT_K))
+        lists.append(_vector_search(db, client_id, vector, candidates))
+        lists.append(_text_search(db, client_id, query, candidates))
     db.commit()  # end the transaction holding SET LOCAL
     hits = rrf_merge(lists, limit=limit)
     # Chunks found only by keywords have no similarity yet; the best vector similarity

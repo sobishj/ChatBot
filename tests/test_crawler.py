@@ -141,3 +141,22 @@ def test_extract_drops_call_to_action_links() -> None:
     html = page("Movies", "<div>Zootopia 2</div><div><a>Know More »</a></div><div>Dheeram</div><div><a>View Store ›</a></div><div>Read more</div><div>View Website</div><div>Located on</div><div>Second Floor</div>")
     text = extract(html, SITE + "/movies/").text
     assert text.splitlines() == ["Movies", "Zootopia 2", "Dheeram", "Located on", "Second Floor"]
+
+
+def test_extract_labels_icon_details_and_decodes_protected_emails() -> None:
+    # Elementor markup as on lulumall.in: a phone icon before a bare number, a Cloudflare-protected email.
+    html = """<html><body><main><h1>SKECHERS</h1><ul>
+      <li class="elementor-icon-list-item"><span class="elementor-icon-list-icon"><svg class="e-font-icon-svg e-fas-phone-square-alt"></svg></span>
+          <span class="elementor-icon-list-text">4055877 </span></li>
+      <li class="elementor-icon-list-item"><span class="elementor-icon-list-icon"><svg class="e-font-icon-svg e-fas-envelope"></svg></span>
+          <span class="elementor-icon-list-text"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="94f8e1f8e1b9fffbf7fcfdb9fdfaf0d4e7fff1f7fcf1e6e7baf7fbf9">[email&#160;protected]</a></span></li>
+      <li><i class="fa fa-clock"></i> 10:00 AM to 10:00 PM</li>
+      <li>Shop Timings <i class="fa fa-clock"></i> 9 to 5</li>
+      </ul><p>Call <a href="tel:+914842727776">+91 4842727776</a> or write to <a href="mailto:info@example.com">info@example.com</a></p></main></body></html>"""
+    text = extract(html, "https://mall.test/shop/skechers/").text
+    assert "Phone: 4055877" in text
+    assert "Email: lulu-kochi-ind@skechers.com" in text
+    assert "protected]" not in text
+    assert "Opening hours: 10:00 AM to 10:00 PM" in text
+    assert "Shop Timings" in text and "Opening hours: Shop Timings" not in text  # already labelled: left alone
+    assert "Phone: +91 4842727776" in text and "Email: info@example.com" in text

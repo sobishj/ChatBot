@@ -51,6 +51,9 @@ class ModelConfig:
     cost_output_per_m: float | None = None
     model_id: int | None = None
     display_name: str = ""
+    # Let thinking models reason before answering (list questions). Otherwise thinking is
+    # switched off where the model allows it: answers start about twice as fast.
+    deep: bool = False
 
     @classmethod
     def from_row(cls, row: AIModel) -> ModelConfig:
@@ -67,6 +70,29 @@ class ModelConfig:
             model_id=row.id,
             display_name=row.name,
         )
+
+
+THINKING_HEADROOM = 2000  # extra max_tokens for hidden reasoning, so it never starves the visible answer
+
+
+def _request_kwargs(cfg: ModelConfig, max_tokens: int | None, allow_quick: bool = True) -> tuple[dict[str, Any], int]:
+    """LiteLLM kwargs and max_tokens for one call.
+
+    Hidden reasoning counts against max_tokens. For quick answers it is switched off where the
+    model allows it; otherwise the cap gets THINKING_HEADROOM on top of the answer length.
+    ``allow_quick`` is False for tool calling, where thinking stays on (models with thinking off
+    occasionally write a tool call as plain text).
+    """
+    kwargs = _litellm_kwargs(cfg)
+    if not kwargs.pop("_no_sampling", False):
+        kwargs["temperature"] = cfg.temperature
+    thinking_off = kwargs.pop("_thinking_off", None)
+    may_think = kwargs.pop("_may_think", False) or _gemini_may_think(cfg)
+    if thinking_off and allow_quick and not cfg.deep:
+        kwargs["thinking"] = thinking_off
+        kwargs["allowed_openai_params"] = ["thinking"]  # LiteLLM's model list doesn't know every model's options
+        may_think = False
+    return kwargs, (max_tokens or cfg.max_tokens) + (THINKING_HEADROOM if may_think else 0)
 
 
 def _litellm_kwargs(cfg: ModelConfig) -> dict[str, Any]:
@@ -112,6 +138,16 @@ def _claude_options(cfg: ModelConfig) -> dict[str, Any]:
         options["_no_sampling"] = True
     if effort:
         options["output_config"] = {"effort": "low"}
+    # Models that think by default (adaptive thinking), and how to switch it off at our "low" effort:
+    # Haiku 5.5 / Opus 5 / Sonnet 5 accept "disabled"; Sonnet 5.5 uses "between_tools";
+    # Opus 5.5 and Fable/Mythos can't switch it off (effort is the only control).
+    thinks_by_default = family in ("fable", "mythos") or (family in ("opus", "sonnet", "haiku") and version >= 5)
+    if thinks_by_default:
+        options["_may_think"] = True
+        if family == "sonnet" and version >= 5.5:
+            options["_thinking_off"] = {"type": "between_tools"}
+        elif not (family in ("fable", "mythos") or (family == "opus" and version >= 5.5)):
+            options["_thinking_off"] = {"type": "disabled"}
     return options
 
 
@@ -138,6 +174,17 @@ def _fast_thinking(cfg: ModelConfig) -> dict[str, Any]:
     if version >= 2.5 and flash:
         return {"thinkingConfig": {"thinkingBudget": 0}}  # 2.5 Flash can switch thinking off
     return {}
+
+
+def _gemini_may_think(cfg: ModelConfig) -> bool:
+    """Gemini 2.5 Pro and 3+ always reason a little, and that counts against max_tokens."""
+    if cfg.provider != "gemini":
+        return False
+    match = _GEMINI_VERSION_RE.search(cfg.model_name.lower())
+    if not match:
+        return False
+    version = float(match.group(1))
+    return version >= 3 or (version >= 2.5 and "flash" not in cfg.model_name.lower())
 
 
 def estimate_cost(cfg: ModelConfig, input_tokens: int, output_tokens: int, response: Any = None) -> float:
@@ -174,14 +221,12 @@ def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int |
     litellm.telemetry = False
     litellm.suppress_debug_info = True
 
-    kwargs = _litellm_kwargs(cfg)
-    if not kwargs.pop("_no_sampling", False):
-        kwargs["temperature"] = cfg.temperature
+    kwargs, cap = _request_kwargs(cfg, max_tokens)
     started = time.perf_counter()
     try:
         response = litellm.completion(
             messages=messages,
-            max_tokens=max_tokens or cfg.max_tokens,
+            max_tokens=cap,
             timeout=cfg.timeout_seconds,
             num_retries=0,
             **kwargs,
@@ -258,9 +303,7 @@ def complete_with_tools(
     litellm.telemetry = False
     litellm.suppress_debug_info = True
 
-    kwargs = _litellm_kwargs(cfg)
-    if not kwargs.pop("_no_sampling", False):
-        kwargs["temperature"] = cfg.temperature
+    kwargs, cap = _request_kwargs(cfg, max_tokens, allow_quick=False)
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
@@ -268,7 +311,7 @@ def complete_with_tools(
     try:
         response = litellm.completion(
             messages=messages,
-            max_tokens=max_tokens or cfg.max_tokens,
+            max_tokens=cap,
             timeout=cfg.timeout_seconds,
             num_retries=0,
             **kwargs,
@@ -307,15 +350,13 @@ def stream_complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens
     litellm.telemetry = False
     litellm.suppress_debug_info = True
 
-    kwargs = _litellm_kwargs(cfg)
-    if not kwargs.pop("_no_sampling", False):
-        kwargs["temperature"] = cfg.temperature
+    kwargs, cap = _request_kwargs(cfg, max_tokens)
     started = time.perf_counter()
     chunks: list[Any] = []
     try:
         stream = litellm.completion(
             messages=messages,
-            max_tokens=max_tokens or cfg.max_tokens,
+            max_tokens=cap,
             timeout=cfg.timeout_seconds,
             num_retries=0,
             stream=True,

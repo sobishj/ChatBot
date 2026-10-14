@@ -42,6 +42,85 @@ _CTA_RE = re.compile(
 )
 
 
+# What an icon next to a detail means (Font Awesome, Elementor, Material, Bootstrap icon names).
+_ICON_LABELS = (
+    (re.compile(r"phone|mobile|whatsapp|\btel\b|call", re.I), "Phone"),
+    (re.compile(r"envelope|\bmail|email|inbox", re.I), "Email"),
+    (re.compile(r"clock|\btime\b|hours|schedule", re.I), "Opening hours"),
+    (re.compile(r"map-marker|map-pin|location|\baddress\b|place", re.I), "Address"),
+)
+_LABEL_WORDS = re.compile(r"\b(?:phone|tel|mobile|call|email|e-mail|mail|hours|timings?|open|address|located)\b", re.I)
+
+
+def _decode_cf_email(hexed: str) -> str | None:
+    """Cloudflare "email protection" hides addresses as XOR-ed hex; browsers decode it with JavaScript."""
+    try:
+        key = int(hexed[:2], 16)
+        return "".join(chr(int(hexed[i : i + 2], 16) ^ key) for i in range(2, len(hexed), 2))
+    except ValueError:
+        return None
+
+
+def _set_text(el: lxml_html.HtmlElement, text: str) -> None:
+    for child in list(el):
+        el.remove(child)
+    el.text = text
+
+
+def _prefix(el: lxml_html.HtmlElement, label: str) -> None:
+    """Put "Label: " before an element's text, unless it already says what it is."""
+    if _LABEL_WORDS.search(el.text_content() or ""):
+        return
+    # Attach the label to the first real text (not the element's start), so "Phone:" and the
+    # number stay on one line even when the markup has line breaks between icon and value.
+    for node in el.iter():
+        if not isinstance(node.tag, str):
+            continue
+        if node.text and node.text.strip():
+            node.text = f"{label}: " + node.text.lstrip()
+            return
+        if node is not el and node.tail and node.tail.strip():
+            node.tail = f" {label}: " + node.tail.lstrip()
+            return
+    el.text = f"{label}: " + (el.text or "")
+
+
+def _annotate(doc: lxml_html.HtmlElement) -> None:
+    """Make implicit details explicit before the text is extracted, so the assistant knows what each one is:
+    decode protected emails, and label phone/email links and details shown only with an icon."""
+    for el in doc.xpath("//*[@data-cfemail]"):
+        email = _decode_cf_email(el.get("data-cfemail", ""))
+        if email:
+            _set_text(el, email)
+    for a in doc.xpath("//a[@href]"):
+        href = a.get("href", "").strip()
+        if "/cdn-cgi/l/email-protection#" in href:
+            email = _decode_cf_email(href.rsplit("#", 1)[1])
+            if email:
+                _set_text(a, email)
+                _prefix(a, "Email")
+        elif href.lower().startswith("tel:") and (a.text_content() or "").strip():
+            _prefix(a, "Phone")
+        elif href.lower().startswith("mailto:") and (a.text_content() or "").strip():
+            _prefix(a, "Email")
+    # A detail shown with only an icon (e.g. a phone icon before "4055877"): label the item it belongs to.
+    for icon in doc.xpath("//svg[@class]|//i[@class]|//span[contains(@class, 'icon') and @class]"):
+        names = " ".join(filter(None, [icon.get("class", ""), icon.get("data-icon", ""), icon.get("aria-label", "")]))
+        label = next((text for pattern, text in _ICON_LABELS if pattern.search(names)), None)
+        if label is None:
+            continue
+        item = icon.getparent()
+        for _ in range(3):  # the list item / paragraph that holds the icon and its text
+            if item is None or (item.tag in ("li", "p", "dd", "td") or len((item.text_content() or "").strip()) > 0):
+                break
+            item = item.getparent()
+        if item is None:
+            continue
+        text = re.sub(r"\s+", " ", item.text_content() or "").strip()
+        if text and len(text) <= 120 and not text.lower().startswith(label.lower()):
+            _prefix(item, label)
+
+
 def _is_noise(line: str) -> bool:
     lowered = line.lower()
     if lowered in _SKIP_LINES:
@@ -115,5 +194,9 @@ def extract(html: str, url: str, mode: str = "auto") -> Extracted:
         return Extracted(title="", text="")
     title = extract_title(doc)
     links = extract_links(doc, url)
-    text = _main_content_text(html, url) if mode == "main_content" else _structural_text(doc)
+    _annotate(doc)
+    if mode == "main_content":
+        text = _main_content_text(lxml_html.tostring(doc, encoding="unicode"), url)
+    else:
+        text = _structural_text(doc)
     return Extracted(title=title, text=text[:MAX_TEXT_CHARS], links=links)

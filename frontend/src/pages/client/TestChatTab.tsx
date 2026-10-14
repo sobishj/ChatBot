@@ -1,6 +1,6 @@
 // Chat exactly as a visitor would, with diagnostics (confidence, model, timing, retrieved chunks).
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { apiStream } from "../../api";
+import { ApiError, apiStream } from "../../api";
 import { Badge, Button, Card, Empty } from "../../components/ui";
 import { duration, money } from "../../format";
 import type { TabProps } from "./ClientDetail";
@@ -52,9 +52,9 @@ export function TestChatTab({ client }: TabProps) {
     const index = turns.length;
     // Any new message settles an open confirmation (the server drops it too).
     setTurns((t) => [...t.map((x) => (x.answer?.confirmation ? { ...x, decided: true } : x)), { question: q }]);
-    try {
-      // Streamed like the widget: the answer appears word by word, diagnostics come with the last event.
-      await apiStream(`/api/admin/clients/${client.client_id}/test-chat/stream`, { session_id: session, message: q, confirm: button?.confirm ?? null }, (ev) => {
+    let received = false;
+    const ask = () => apiStream(`/api/admin/clients/${client.client_id}/test-chat/stream`, { session_id: session, message: q, confirm: button?.confirm ?? null }, (ev) => {
+      received = true;
         if (ev.t === "delta") {
           setTurns((t) => t.map((x, i) => (i === index ? { ...x, partial: (x.partial ?? "") + ev.text } : x)));
         } else if (ev.t === "done") {
@@ -63,6 +63,16 @@ export function TestChatTab({ client }: TabProps) {
           setSelected(index);
         }
       });
+    try {
+      // Streamed like the widget: the answer appears word by word, diagnostics come with the last event.
+      try {
+        await ask();
+      } catch (err) {
+        // Couldn't reach the server (e.g. it was restarting): try once more before showing an error.
+        if (!(err instanceof ApiError && err.status === 0) || received) throw err;
+        await new Promise((r) => setTimeout(r, 1500));
+        await ask();
+      }
     } catch (err) {
       setTurns((t) => t.map((x, i) => (i === index ? { ...x, failed: (err as Error).message } : x)));
     } finally {

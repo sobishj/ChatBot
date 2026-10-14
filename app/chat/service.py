@@ -8,20 +8,21 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.chat.essentials import key_information, page_directory
 from app.chat.language import detect_language
 from app.chat.pii import mask_pii
 from app.chat.prompt import build_messages, parse_answer
 from app.db.models import Client, Question
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, complete, complete_with_tools
-from app.search.hybrid import SearchHit, search, words
+from app.search.hybrid import SearchHit, is_list_question, search, words
 from app.services.ai_models import resolve_for_client
 from app.services.clients import branding, document_settings
 from app.services.settings import get_settings_map
@@ -173,11 +174,15 @@ class PreparedAnswer:
         doc_settings = document_settings(self.client)
         messages = build_messages(
             self.settings["system_prompt"], b["bot_name"], self.client.name, result.hits, history, self.question,
-            doc_settings.get("key_facts") or "", local_now(self.settings["timezone"]),
+            key_information(db, self.client.id, doc_settings.get("key_facts") or ""), local_now(self.settings["timezone"]),
+            page_directory(db, self.client.id) if is_list_question(self.question) else "",
         )
         primary, fallback = resolve_for_client(db, self.client)
         if primary is None:
             raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
+        if is_list_question(self.question):  # completeness needs the model's reasoning; other answers start faster without it
+            primary = replace(primary, deep=True)
+            fallback = replace(fallback, deep=True) if fallback else None
         return primary, fallback, messages
 
     def apply(self, llm_result: LLMResult, used_fallback: bool) -> None:

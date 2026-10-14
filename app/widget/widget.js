@@ -16,11 +16,11 @@
   var API_BASE = script && script.src ? new URL(script.src, location.href).origin : location.origin;
 
   var STRINGS = {
-    en: { placeholder: "Type your question…", send: "Send", open: "Open chat", close: "Close chat", sources: "Sources", error: "Sorry, something went wrong. Please try again.", busy: "Too many messages. Please wait a moment.", title: "Chat", confirm: "Confirm", cancel: "Cancel" },
-    ml: { placeholder: "നിങ്ങളുടെ ചോദ്യം ടൈപ്പ് ചെയ്യുക…", send: "അയയ്ക്കുക", open: "ചാറ്റ് തുറക്കുക", close: "ചാറ്റ് അടയ്ക്കുക", sources: "ഉറവിടങ്ങൾ", error: "ക്ഷമിക്കണം, ഒരു പിശക് സംഭവിച്ചു. വീണ്ടും ശ്രമിക്കുക.", busy: "ധാരാളം സന്ദേശങ്ങൾ. അൽപ്പസമയം കാത്തിരിക്കുക.", title: "ചാറ്റ്", confirm: "സ്ഥിരീകരിക്കുക", cancel: "റദ്ദാക്കുക" },
-    hi: { placeholder: "अपना प्रश्न लिखें…", send: "भेजें", open: "चैट खोलें", close: "चैट बंद करें", sources: "स्रोत", error: "क्षमा करें, कुछ गलत हो गया। फिर से प्रयास करें।", busy: "बहुत सारे संदेश। कृपया थोड़ी देर प्रतीक्षा करें।", title: "चैट", confirm: "पुष्टि करें", cancel: "रद्द करें" },
-    ar: { placeholder: "اكتب سؤالك…", send: "إرسال", open: "فتح الدردشة", close: "إغلاق الدردشة", sources: "المصادر", error: "عذرًا، حدث خطأ. حاول مرة أخرى.", busy: "رسائل كثيرة. يرجى الانتظار قليلًا.", title: "دردشة", confirm: "تأكيد", cancel: "إلغاء" },
-    ta: { placeholder: "உங்கள் கேள்வியை தட்டச்சு செய்யவும்…", send: "அனுப்பு", open: "அரட்டையைத் திற", close: "அரட்டையை மூடு", sources: "ஆதாரங்கள்", error: "மன்னிக்கவும், பிழை ஏற்பட்டது. மீண்டும் முயலவும்.", busy: "அதிக செய்திகள். சிறிது காத்திருக்கவும்.", title: "அரட்டை", confirm: "உறுதிப்படுத்து", cancel: "ரத்து செய்" }
+    en: { placeholder: "Type your question…", send: "Send", open: "Open chat", close: "Close chat", sources: "Sources", error: "Sorry, something went wrong. Please try again.", offline: "Sorry, I couldn't connect. Please check your internet connection and try again.", busy: "Too many messages. Please wait a moment.", title: "Chat", confirm: "Confirm", cancel: "Cancel" },
+    ml: { placeholder: "നിങ്ങളുടെ ചോദ്യം ടൈപ്പ് ചെയ്യുക…", send: "അയയ്ക്കുക", open: "ചാറ്റ് തുറക്കുക", close: "ചാറ്റ് അടയ്ക്കുക", sources: "ഉറവിടങ്ങൾ", error: "ക്ഷമിക്കണം, ഒരു പിശക് സംഭവിച്ചു. വീണ്ടും ശ്രമിക്കുക.", offline: "ക്ഷമിക്കണം, കണക്റ്റ് ചെയ്യാൻ കഴിഞ്ഞില്ല. ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിച്ച് വീണ്ടും ശ്രമിക്കുക.", busy: "ധാരാളം സന്ദേശങ്ങൾ. അൽപ്പസമയം കാത്തിരിക്കുക.", title: "ചാറ്റ്", confirm: "സ്ഥിരീകരിക്കുക", cancel: "റദ്ദാക്കുക" },
+    hi: { placeholder: "अपना प्रश्न लिखें…", send: "भेजें", open: "चैट खोलें", close: "चैट बंद करें", sources: "स्रोत", error: "क्षमा करें, कुछ गलत हो गया। फिर से प्रयास करें।", offline: "क्षमा करें, कनेक्ट नहीं हो सका। अपना इंटरनेट कनेक्शन जांचें और फिर से प्रयास करें।", busy: "बहुत सारे संदेश। कृपया थोड़ी देर प्रतीक्षा करें।", title: "चैट", confirm: "पुष्टि करें", cancel: "रद्द करें" },
+    ar: { placeholder: "اكتب سؤالك…", send: "إرسال", open: "فتح الدردشة", close: "إغلاق الدردشة", sources: "المصادر", error: "عذرًا، حدث خطأ. حاول مرة أخرى.", offline: "عذرًا، تعذّر الاتصال. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.", busy: "رسائل كثيرة. يرجى الانتظار قليلًا.", title: "دردشة", confirm: "تأكيد", cancel: "إلغاء" },
+    ta: { placeholder: "உங்கள் கேள்வியை தட்டச்சு செய்யவும்…", send: "அனுப்பு", open: "அரட்டையைத் திற", close: "அரட்டையை மூடு", sources: "ஆதாரங்கள்", error: "மன்னிக்கவும், பிழை ஏற்பட்டது. மீண்டும் முயலவும்.", offline: "மன்னிக்கவும், இணைக்க முடியவில்லை. இணைய இணைப்பைச் சரிபார்த்து மீண்டும் முயலவும்.", busy: "அதிக செய்திகள். சிறிது காத்திருக்கவும்.", title: "அரட்டை", confirm: "உறுதிப்படுத்து", cancel: "ரத்து செய்" }
   };
 
   // ------------------------------------------------------------------ helpers
@@ -357,9 +357,11 @@
       }
       streaming = null;
       sendStreamed(requestBody(text, confirm))
-        .catch(function () {
-          if (!streaming) add({ role: "bot", text: t.error });
-          else if (!streaming.text) streaming.text = t.error;
+        .catch(function (err) {
+          // fetch() rejects with a TypeError when the server can't be reached: say so plainly.
+          var message = err && err.name === "TypeError" ? (t.offline || STRINGS.en.offline) : t.error;
+          if (!streaming) add({ role: "bot", text: message });
+          else if (!streaming.text) streaming.text = message;
         })
         .then(function () { streaming = null; busy = false; sendBtn.disabled = false; save(); render(); input.focus(); });
     }

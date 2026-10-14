@@ -133,3 +133,31 @@ def test_chat_all_models_down_is_logged(db: Session, embedder, mall, ai_model) -
 def test_chat_without_model_configured(db: Session, embedder, mall) -> None:
     r = answer_question(db, mall, "session-123456", "Hello", llm=FakeLLM())
     assert r.error and "No AI model" in r.error
+
+
+def test_essential_pages_are_always_given_to_the_assistant(db: Session, embedder, make_client) -> None:
+    from app.chat.essentials import essential_pages, key_information
+    from app.db.models import Page
+
+    client = make_client("mallx", "Mall X")
+    for title, url, content in (
+        ("Mall Timings - Mall X", "https://x.test/mall-timings/", "Monday to Sunday 09:00 AM to 11:00 PM"),
+        ("Contact Us - Mall X", "https://x.test/contact/", "Phone: 0484 2727776"),
+        ("NIKE - Mall X", "https://x.test/shop/nike/", "Sportswear. Shop Timings 10 AM to 10 PM"),
+    ):
+        db.add(Page(client_id=client.id, title=title, url=url, content=content, content_hash=url))
+    db.commit()
+    text = essential_pages(db, client.id)
+    assert text.index("Mall Timings") < text.index("Contact Us") and "NIKE" not in text
+    assert key_information(db, client.id, "Parking is free.").startswith("Parking is free.")
+
+
+def test_page_directory_lists_names_without_the_site_suffix(db: Session, embedder, make_client) -> None:
+    from app.chat.essentials import page_directory
+    from app.db.models import Page
+
+    client = make_client("maly", "Mall Y")
+    for name in ("NIKE", "SKECHERS", "BATA", "About Us"):
+        db.add(Page(client_id=client.id, title=f"{name} - Mall Y", url=f"https://y.test/{name}", content="x", content_hash=name))
+    db.commit()
+    assert page_directory(db, client.id) == "About Us, BATA, NIKE, SKECHERS"

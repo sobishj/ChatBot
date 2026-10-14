@@ -10,9 +10,11 @@ from app.search.hybrid import SearchHit
 NO_ANSWER_TAG = "[[NO_ANSWER]]"
 _NO_ANSWER_RE = re.compile(r"\[\[\s*NO[_ ]ANSWER\s*\]\]", re.IGNORECASE)
 MAX_CONTEXT_CHARS = 12_000
+MANY_HITS = 7  # with more hits than this (list questions), each is cut to its first lines
+MANY_HITS_CHARS = 650
 
 
-def format_context(hits: list[SearchHit], key_facts: str = "", client_name: str = "") -> str:
+def format_context(hits: list[SearchHit], key_facts: str = "", client_name: str = "", directory: str = "") -> str:
     """Numbered context blocks with their source, trimmed to a safe total size.
 
     ``key_facts`` (the client's always-included key information) comes first, as block [0].
@@ -20,12 +22,18 @@ def format_context(hits: list[SearchHit], key_facts: str = "", client_name: str 
     blocks: list[str] = []
     if key_facts.strip():
         blocks.append(f"[0] Key information about {client_name or 'us'} (always applies)\n{key_facts.strip()}")
+    if directory:
+        blocks.append(f"[D] Directory: the names of all our pages (shops, services, …)\n{directory}")
     if not hits:
         return blocks[0] if blocks else "(no relevant information found)"
-    used = len(blocks[0]) if blocks else 0
+    used = sum(len(b) for b in blocks)
+    many = len(hits) > MANY_HITS
     for i, hit in enumerate(hits, start=1):
         label = hit.source if hit.source_type == "web" else f"document: {hit.source}"
-        block = f"[{i}] {hit.title or 'Untitled'} ({label})\n{hit.content.strip()}"
+        content = hit.content.strip()
+        if many and len(content) > MANY_HITS_CHARS:  # list questions: the opening lines say what each page is
+            content = content[:MANY_HITS_CHARS].rsplit(" ", 1)[0] + " …"
+        block = f"[{i}] {hit.title or 'Untitled'} ({label})\n{content}"
         if used + len(block) > MAX_CONTEXT_CHARS and blocks:
             break
         blocks.append(block)
@@ -62,6 +70,19 @@ DOCUMENTS_RULE = (
     "documentation, files, sources or \"the information I have\" (no \"the documents describe…\", \"based on the "
     "documentation…\", \"according to…\"). Never add facts that are not in the CONTEXT."
 )
+DETAILS_RULE = (
+    "DETAILS RULE: When you give a number, email, address, time or code, say what it is (for example \"phone 0484 123 4567\", "
+    "\"shop number\", \"price\", \"booking ID\"), going by what the CONTEXT shows: a label such as \"Phone:\" or \"Email:\", "
+    "or the words around it. If the CONTEXT doesn't make clear what a number is, don't call it a phone number or anything "
+    "else; just give it as written. Reply like a friendly, helpful person at our front desk: natural, warm sentences, "
+    "not a robotic list of fields."
+)
+LIST_RULE = (
+    "LIST RULE: The visitor wants a list (for example \"which shops sell shoes?\"). Include every match: the pages in the "
+    "CONTEXT and the names in the Directory [D]. A shop's page often doesn't say what it sells, so for well-known brands "
+    "use common knowledge of what they are known for (for example Skechers, Nike and Adidas sell footwear). Only name "
+    "shops, services or brands that appear in the CONTEXT or the Directory; never add others."
+)
 SUBJECT_RULE = (
     "SUBJECT RULE: When the visitor doesn't say which shop, product or service they mean and it isn't clear from the "
     "conversation, they mean {client_name} itself: for example \"is it open?\" asks about {client_name}'s own opening hours, "
@@ -78,11 +99,13 @@ def build_messages(
     question: str,
     key_facts: str = "",
     now: datetime | None = None,
+    directory: str = "",
 ) -> list[dict[str, str]]:
     """``history`` is a list of (question, answer) pairs, oldest first."""
-    context = format_context(hits, key_facts, client_name)
+    context = format_context(hits, key_facts, client_name, directory)
     system = render_system_prompt(template, bot_name, client_name, context, now.date() if now else None)
-    system += "\n\n" + SUBJECT_RULE.format(client_name=client_name) + "\n\n" + DOCUMENTS_RULE.format(client_name=client_name)
+    rules = [SUBJECT_RULE, DETAILS_RULE, DOCUMENTS_RULE] + ([LIST_RULE] if directory else [])
+    system += "\n\n" + "\n\n".join(rule.format(client_name=client_name) for rule in rules)
     if now is not None:  # lets the assistant answer "is it open now?"
         system += f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname() or 'local'})."
     messages = [{"role": "system", "content": system}]

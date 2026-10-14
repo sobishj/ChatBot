@@ -13,6 +13,18 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/** Shown instead of the browser's "Failed to fetch" when the server can't be reached. */
+export const OFFLINE_MESSAGE = "Sorry, couldn't connect to the server. Please check your connection and try again.";
+
+/** fetch() that turns network failures (server down, no internet) into a readable ApiError. */
+async function request(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch {
+    throw new ApiError(0, OFFLINE_MESSAGE);
+  }
+}
+
 type Listener = (status: number, detail: string) => void;
 const listeners: Listener[] = [];
 /** Global hook: the auth layer listens for 401/409 to redirect to login or setup. */
@@ -32,7 +44,7 @@ export async function api<T = any>(path: string, options: { method?: string; bod
     body = JSON.stringify(options.body);
   }
   if (method !== "GET") headers["X-CSRF-Token"] = csrfToken();
-  const resp = await fetch(path, { method, headers, body, credentials: "same-origin" });
+  const resp = await request(path, { method, headers, body, credentials: "same-origin" });
   if (!resp.ok) {
     let detail = resp.statusText || "Request failed";
     try {
@@ -177,7 +189,7 @@ export interface Stats {
 
 /** POST and read a server-sent-event stream: calls onEvent for each `data:` JSON event. */
 export async function apiStream(path: string, body: unknown, onEvent: (event: any) => void): Promise<void> {
-  const resp = await fetch(path, {
+  const resp = await request(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify(body),
@@ -206,7 +218,13 @@ export async function apiStream(path: string, body: unknown, onEvent: (event: an
     }
   };
   for (;;) {
-    const { done, value } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch {
+      throw new ApiError(0, OFFLINE_MESSAGE); // connection dropped mid-answer
+    }
+    const { done, value } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const parts = buffer.split("\n\n");
