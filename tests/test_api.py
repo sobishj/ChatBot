@@ -273,3 +273,15 @@ def test_chatbot_switched_off_hides_widget_but_test_chat_works(db: Session, mall
 
     root.put("/api/admin/clients/mall/branding", json={"widget_enabled": True})
     assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).status_code == 200
+
+
+def test_model_priority_api(db: Session, embedder, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = admin_client()
+    finish_setup(db, api, monkeypatch)
+    first = api.get("/api/admin/models").json()["models"][0]["id"]
+    second = api.post("/api/admin/models", json={"name": "Backup", "provider": "openai_compatible", "base_url": "http://b/v1", "model_name": "b"}).json()["model"]["id"]
+    saved = api.put("/api/admin/models/priority", json={"model_ids": [second, first]}).json()
+    assert saved["priority"] == [second, first] and saved["default_model_id"] == second and saved["fallback_model_id"] == first
+    assert api.post(f"/api/admin/models/{first}/default").json()["priority"] == [first, second]
+    assert api.put("/api/admin/models/priority", json={"model_ids": []}).status_code == 400
+    assert api.put("/api/admin/models/priority", json={"model_ids": [999999]}).status_code == 404

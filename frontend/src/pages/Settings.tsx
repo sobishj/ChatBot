@@ -106,7 +106,63 @@ interface ModelsData {
   providers: Provider[];
   default_model_id: number | null;
   fallback_model_id: number | null;
+  priority: number[];
   mode: string;
+}
+
+/** The order chat tries models in. If one fails (busy, rate-limited, down), the next answers. */
+function ModelPriority({ data, onSaved }: { data: ModelsData; onSaved: (d: ModelsData) => void }) {
+  const [order, setOrder] = useState<number[]>(data.priority);
+  const { busy, run } = useAction();
+  useEffect(() => setOrder(data.priority), [data.priority]);
+  const name = (id: number) => data.models.find((m) => m.id === id);
+  const unused = data.models.filter((m) => !order.includes(m.id));
+  const move = (i: number, by: number) => {
+    const next = [...order];
+    [next[i], next[i + by]] = [next[i + by], next[i]];
+    setOrder(next);
+  };
+  const changed = order.join(",") !== data.priority.join(",");
+  return (
+    <Card
+      title="Model priority"
+      subtitle="Answers come from the first model. If it fails (busy, rate-limited, down or timed out), the next one answers automatically, and so on. A client with its own model (AI model tab) tries that first."
+    >
+      <div className="stack">
+        {order.length === 0 && <p className="muted" style={{ margin: 0 }}>No models in the list yet: add one below.</p>}
+        {order.map((id, i) => {
+          const m = name(id);
+          return (
+            <div key={id} className="row between" style={{ padding: "8px 12px", border: "1px solid var(--border)", borderRadius: 8 }}>
+              <span className="row" style={{ gap: 8 }}>
+                <Badge color={i === 0 ? "green" : undefined}>{i + 1}</Badge>
+                <strong>{m?.name ?? `Model ${id}`}</strong>
+                <span className="small muted mono">{m?.model_name}</span>
+                {i === 0 && <span className="small muted">answers first</span>}
+              </span>
+              <span className="row" style={{ gap: 4 }}>
+                <Button size="sm" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move ${m?.name} up`}>↑</Button>
+                <Button size="sm" disabled={i === order.length - 1} onClick={() => move(i, 1)} aria-label={`Move ${m?.name} down`}>↓</Button>
+                <Button size="sm" kind="ghost" icon="x" disabled={order.length === 1} onClick={() => setOrder(order.filter((x) => x !== id))} aria-label={`Remove ${m?.name} from the list`} />
+              </span>
+            </div>
+          );
+        })}
+        {unused.length > 0 && (
+          <div className="row">
+            <span className="small muted">Add:</span>
+            {unused.map((m) => <Button key={m.id} size="sm" icon="plus" onClick={() => setOrder([...order, m.id])}>{m.name}</Button>)}
+          </div>
+        )}
+        <div className="row end">
+          <Button kind="primary" loading={busy} disabled={!changed || order.length === 0}
+            onClick={() => run(async () => onSaved(await api<ModelsData>("/api/admin/models/priority", { method: "PUT", body: { model_ids: order } })), "Model priority saved")}>
+            Save order
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 function ModelsTab() {
@@ -151,15 +207,7 @@ function ModelsTab() {
         )}
       </Card>
 
-      <Card title="Fallback model" subtitle="Used automatically when a client's model fails or times out.">
-        <div className="row">
-          <select className="select" style={{ maxWidth: 360 }} value={data.fallback_model_id ?? ""} aria-label="Fallback model"
-            onChange={(e) => run(async () => setData(await api("/api/admin/models/fallback", { body: { model_id: e.target.value ? Number(e.target.value) : null } })), "Fallback updated")}>
-            <option value="">No fallback</option>
-            {data.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </div>
-      </Card>
+      {data.models.length > 0 && <ModelPriority data={data} onSaved={setData} />}
 
       {editing && (
         <ModelEditor

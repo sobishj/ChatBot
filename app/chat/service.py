@@ -23,7 +23,7 @@ from app.db.models import Client, Question
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, complete, complete_with_tools
 from app.search.hybrid import SearchHit, is_list_question, search, words
-from app.services.ai_models import resolve_for_client
+from app.services.ai_models import resolve_chain
 from app.services.clients import branding, document_settings
 from app.services.settings import get_settings_map
 
@@ -109,16 +109,16 @@ def sources_from_hits(hits: list[SearchHit], limit: int = MAX_SOURCES) -> list[d
     return out
 
 
-def _call_with_fallback(
-    primary: ModelConfig, fallback: ModelConfig | None, messages: list[dict[str, str]], llm: Callable[..., LLMResult]
-) -> tuple[LLMResult, bool]:
-    try:
-        return llm(primary, messages), False
-    except LLMError as exc:
-        if fallback is None:
-            raise
-        logger.warning("Model %s failed (%s); using fallback %s", primary.display_name, exc, fallback.display_name)
-        return llm(fallback, messages), True
+def _call_with_fallback(chain: list[ModelConfig], messages: list[dict[str, str]], llm: Callable[..., LLMResult]) -> tuple[LLMResult, bool]:
+    """Try the models in priority order; returns (result, whether a lower-priority model answered)."""
+    for i, cfg in enumerate(chain):
+        try:
+            return llm(cfg, messages), i > 0
+        except LLMError as exc:
+            if i + 1 == len(chain):
+                raise
+            logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)
+    raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
 
 
 def answer_question(
@@ -142,8 +142,8 @@ def answer_question(
 
     prepared = prepare_answer(db, client, session_id, message, channel)
     try:
-        primary, fallback, messages = prepared.model_inputs(db, embedder)
-        llm_result, used_fallback = _call_with_fallback(primary, fallback, messages, llm)
+        chain, messages = prepared.model_inputs(db, embedder)
+        llm_result, used_fallback = _call_with_fallback(chain, messages, llm)
         prepared.apply(llm_result, used_fallback)
     except (LLMError, EmbeddingNotReady) as exc:
         prepared.fail(exc)
@@ -164,8 +164,8 @@ class PreparedAnswer:
     started: float
     model_id: int | None = None
 
-    def model_inputs(self, db: Session, embedder: Embedder | None = None) -> tuple[ModelConfig, ModelConfig | None, list[dict[str, str]]]:
-        """Search, build the prompt and pick the models. Raises LLMError / EmbeddingNotReady."""
+    def model_inputs(self, db: Session, embedder: Embedder | None = None) -> tuple[list[ModelConfig], list[dict[str, str]]]:
+        """Search, build the prompt and pick the models (in priority order). Raises LLMError / EmbeddingNotReady."""
         b = branding(self.client)
         history = load_history(db, self.client.id, self.session_id, self.channel)
         result = search(db, embedder or get_embedder(), self.client.id, self.question, previous_question=history[-1][0] if history else None)
@@ -177,13 +177,12 @@ class PreparedAnswer:
             key_information(db, self.client.id, doc_settings.get("key_facts") or ""), local_now(self.settings["timezone"]),
             page_directory(db, self.client.id) if is_list_question(self.question) else "",
         )
-        primary, fallback = resolve_for_client(db, self.client)
-        if primary is None:
+        chain = resolve_chain(db, self.client)
+        if not chain:
             raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
         if is_list_question(self.question):  # completeness needs the model's reasoning; other answers start faster without it
-            primary = replace(primary, deep=True)
-            fallback = replace(fallback, deep=True) if fallback else None
-        return primary, fallback, messages
+            chain = [replace(cfg, deep=True) for cfg in chain]
+        return chain, messages
 
     def apply(self, llm_result: LLMResult, used_fallback: bool) -> None:
         response = self.response

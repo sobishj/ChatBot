@@ -63,21 +63,19 @@ class VisibleText:
         return new
 
 
-def _model_stream(stream_llm: StreamLLM, primary: ModelConfig, fallback: ModelConfig | None, messages: list[dict[str, str]]) -> Iterator[tuple[str | LLMResult, bool]]:
-    """Stream from the primary model; if it fails before writing anything, use the fallback."""
-    for cfg, is_fallback in ((primary, False), (fallback, True)):
-        if cfg is None:
-            continue
+def _model_stream(stream_llm: StreamLLM, chain: list[ModelConfig], messages: list[dict[str, str]]) -> Iterator[tuple[str | LLMResult, bool]]:
+    """Stream from the models in priority order; one that fails before writing anything hands over to the next."""
+    for i, cfg in enumerate(chain):
         wrote = False
         try:
             for item in stream_llm(cfg, messages):
                 wrote = wrote or isinstance(item, str)
-                yield item, is_fallback
+                yield item, i > 0
             return
         except LLMError as exc:
-            if wrote or is_fallback or fallback is None:
+            if wrote or i + 1 == len(chain):
                 raise
-            logger.warning("Model %s failed (%s); using fallback %s", primary.display_name, exc, fallback.display_name)
+            logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)
 
 
 def stream_answer(
@@ -107,11 +105,11 @@ def stream_answer(
         prepared = prepare_answer(db, client, session_id, message, channel)
         visible = VisibleText()
         try:
-            primary, fallback, messages = prepared.model_inputs(db, embedder)
+            chain, messages = prepared.model_inputs(db, embedder)
             db.commit()  # don't hold a transaction open while the model writes
             final: LLMResult | None = None
             used_fallback = False
-            for item, from_fallback in _model_stream(stream_llm or stream_complete, primary, fallback, messages):
+            for item, from_fallback in _model_stream(stream_llm or stream_complete, chain, messages):
                 used_fallback = from_fallback
                 if isinstance(item, LLMResult):
                     final = item

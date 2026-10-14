@@ -116,11 +116,34 @@ def test_chat_uses_client_model_and_fallback(db: Session, embedder, mall, ai_mod
     r = answer_question(db, mall, "session-123456", "Where is ASICS?", llm=llm)
     assert llm.calls[-1][0] == "special-model" and not r.used_fallback
 
-    llm = FakeLLM(fail_models={"special-model"})
+    # The client's own model, then the priority list (default first, then the fallback).
+    llm = FakeLLM(fail_models={"special-model", "main-model"})
     r = answer_question(db, mall, "session-123456", "Where is ASICS?", llm=llm)
-    assert [c[0] for c in llm.calls] == ["special-model", "backup-model"]
+    assert [c[0] for c in llm.calls] == ["special-model", "main-model", "backup-model"]
     assert r.used_fallback and r.model_name == "Backup"
     assert db.get(Question, r.question_id).used_fallback
+
+
+def test_model_priority_tries_models_in_order(db: Session, embedder, mall, ai_model) -> None:
+    from app.services.ai_models import model_priority, set_priority
+    from app.services.settings import get_setting
+
+    second = save_model(db, {"name": "Second", "provider": "openai_compatible", "base_url": "http://s/v1", "model_name": "second-model"})
+    third = save_model(db, {"name": "Third", "provider": "openai_compatible", "base_url": "http://t/v1", "model_name": "third-model"})
+    set_priority(db, [second.id, ai_model.id, third.id])
+    db.commit()
+    assert model_priority(db) == [second.id, ai_model.id, third.id]
+    assert get_setting(db, "default_model_id") == second.id and get_setting(db, "fallback_model_id") == ai_model.id
+
+    llm = FakeLLM(fail_models={"second-model", "main-model"})
+    r = answer_question(db, mall, "session-prio-1", "Where is ASICS?", llm=llm)
+    assert [c[0] for c in llm.calls] == ["second-model", "main-model", "third-model"] and r.model_name == "Third"
+
+    from app.services.ai_models import delete_model
+
+    delete_model(db, second)
+    db.commit()
+    assert model_priority(db) == [ai_model.id, third.id]
 
 
 def test_chat_all_models_down_is_logged(db: Session, embedder, mall, ai_model) -> None:

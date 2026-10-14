@@ -41,7 +41,7 @@ from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, ToolsUnsupported
 from app.search.hybrid import is_list_question, search
 from app.services import rate_limit
-from app.services.ai_models import resolve_for_client
+from app.services.ai_models import resolve_chain
 from app.services.clients import branding, document_settings
 from app.services.settings import get_settings_map
 
@@ -106,18 +106,19 @@ class _Run:
 
 
 def _call(
-    tool_llm: Callable[..., ToolResult], primary: ModelConfig, fallback: ModelConfig | None, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    tool_llm: Callable[..., ToolResult], chain: list[ModelConfig], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
 ) -> tuple[ToolResult, bool]:
-    """Same fallback rule as plain answers: if the primary model fails, try the fallback once."""
-    try:
-        return tool_llm(primary, messages, tools), False
-    except ToolsUnsupported:
-        raise
-    except LLMError as exc:
-        if fallback is None:
+    """Same rule as plain answers: try the models in priority order until one answers."""
+    for i, cfg in enumerate(chain):
+        try:
+            return tool_llm(cfg, messages, tools), i > 0
+        except ToolsUnsupported:
             raise
-        logger.warning("Model %s failed (%s); using fallback %s", primary.display_name, exc, fallback.display_name)
-        return tool_llm(fallback, messages, tools), True
+        except LLMError as exc:
+            if i + 1 == len(chain):
+                raise
+            logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)
+    raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
 
 
 def answer_with_actions(
@@ -195,8 +196,8 @@ def answer_with_actions(
         return response
 
     try:
-        primary, fallback = resolve_for_client(db, client)
-        if primary is None:
+        chain = resolve_chain(db, client)
+        if not chain:
             raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
         history = load_history(db, client.id, session_id, channel)
         tools = tools_for(actions)
@@ -245,10 +246,10 @@ def answer_with_actions(
 
         # ------------------------------------------------------------ tool loop
         try:
-            text = _tool_loop(db, client, session_id, messages, tools, by_name, vault, primary, fallback, tool_llm, run, run_action)
+            text = _tool_loop(db, client, session_id, messages, tools, by_name, vault, chain, tool_llm, run, run_action)
         except ToolsUnsupported as exc:
             logger.warning("Client %s: %s; answering without actions", client.client_id, exc)
-            plain, used_fallback = _plain(llm, primary, fallback, plain_messages)
+            plain, used_fallback = _plain(llm, chain, plain_messages)
             run.add(plain, used_fallback)
             text = plain.text
 
@@ -265,13 +266,10 @@ def answer_with_actions(
         return finish(UNAVAILABLE_ANSWER, False, [], str(exc)[:1000])
 
 
-def _plain(llm: Callable[..., LLMResult], primary: ModelConfig, fallback: ModelConfig | None, messages: list[dict[str, Any]]) -> tuple[LLMResult, bool]:
-    try:
-        return llm(primary, messages), False
-    except LLMError:
-        if fallback is None:
-            raise
-        return llm(fallback, messages), True
+def _plain(llm: Callable[..., LLMResult], chain: list[ModelConfig], messages: list[dict[str, Any]]) -> tuple[LLMResult, bool]:
+    from app.chat.service import _call_with_fallback
+
+    return _call_with_fallback(chain, messages, llm)
 
 
 def _tool_loop(
@@ -282,8 +280,7 @@ def _tool_loop(
     tools: list[dict[str, Any]],
     by_name: dict[str, ClientAction],
     vault: dict[str, str],
-    primary: ModelConfig,
-    fallback: ModelConfig | None,
+    chain: list[ModelConfig],
     tool_llm: Callable[..., ToolResult],
     run: _Run,
     run_action: Callable[[ClientAction, dict[str, Any], bool], ActionResult],
@@ -291,7 +288,7 @@ def _tool_loop(
     """Up to MAX_TOOL_ROUNDS rounds of tool calls, then a final answer without tools."""
     for round_no in range(MAX_TOOL_ROUNDS + 1):
         offer_tools = tools if round_no < MAX_TOOL_ROUNDS else []
-        result, used_fallback = _call(tool_llm, primary, fallback, messages, offer_tools)
+        result, used_fallback = _call(tool_llm, chain, messages, offer_tools)
         run.add(result, used_fallback)
         if not result.tool_calls or not offer_tools:
             return result.text

@@ -18,12 +18,14 @@ from app.services.ai_models import (
     delete_model,
     discover_models,
     list_models,
+    model_priority,
     model_to_dict,
     record_test,
     run_test,
     save_model,
+    set_priority,
 )
-from app.services.settings import get_settings_map, set_setting
+from app.services.settings import get_settings_map
 
 router = APIRouter(
     prefix="/api/admin/models",
@@ -46,6 +48,7 @@ def _listing(db: Session) -> dict[str, Any]:
         "providers": [p.as_dict() for p in PROVIDERS.values()],
         "default_model_id": values["default_model_id"],
         "fallback_model_id": values["fallback_model_id"],
+        "priority": model_priority(db),
         "mode": values["mode"],
     }
 
@@ -63,6 +66,22 @@ def create(body: dict[str, Any], db: Session = Depends(get_db)) -> dict[str, Any
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return {"model": model_to_dict(model), **_listing(db)}
+
+
+class PriorityIn(BaseModel):
+    model_ids: list[int]
+
+
+@router.put("/priority")
+def save_priority(body: PriorityIn, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """The order chat tries models in: the first answers; if it fails (busy, rate-limited, down), the next."""
+    if not body.model_ids:
+        raise HTTPException(status_code=400, detail="Keep at least one model in the list.")
+    for model_id in body.model_ids:
+        _get(db, model_id)
+    set_priority(db, body.model_ids)
+    db.commit()
+    return _listing(db)
 
 
 @router.put("/{model_id}")
@@ -122,8 +141,9 @@ def test_saved(model_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
 
 @router.post("/{model_id}/default")
 def make_default(model_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Move the model to the top of the priority list."""
     _get(db, model_id)
-    set_setting(db, "default_model_id", model_id)
+    set_priority(db, [model_id, *model_priority(db)])
     db.commit()
     return _listing(db)
 
@@ -136,6 +156,8 @@ class FallbackIn(BaseModel):
 def set_fallback(body: FallbackIn, _: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
     if body.model_id is not None:
         _get(db, body.model_id)
-    set_setting(db, "fallback_model_id", body.model_id)
+    order = model_priority(db)
+    rest = [i for i in order[1:] if i != body.model_id]
+    set_priority(db, order[:1] + ([body.model_id] if body.model_id else []) + rest)
     db.commit()
     return _listing(db)

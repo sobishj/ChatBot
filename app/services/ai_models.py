@@ -100,11 +100,36 @@ def save_model(db: Session, data: dict[str, Any], existing: AIModel | None = Non
 
 
 def delete_model(db: Session, model: AIModel) -> None:
-    for key in ("default_model_id", "fallback_model_id"):
-        if get_setting(db, key) == model.id:
-            set_setting(db, key, None)
+    set_priority(db, [i for i in model_priority(db) if i != model.id])
     db.delete(model)
     db.flush()
+
+
+# ----------------------------------------------------------------------------- priority
+def model_priority(db: Session) -> list[int]:
+    """Saved model ids in the order chat tries them: the default first, then the priority list,
+    then the fallback (older setups and the setup wizard only set default and fallback)."""
+    default, fallback = get_setting(db, "default_model_id"), get_setting(db, "fallback_model_id")
+    order = [default, *(get_setting(db, "model_priority") or []), fallback]
+    existing = set(db.scalars(select(AIModel.id)))
+    return list(dict.fromkeys(i for i in order if i in existing))
+
+
+def set_priority(db: Session, model_ids: list[int]) -> list[int]:
+    """Store the order; the first model is the default and the second the fallback (kept for older screens)."""
+    existing = set(db.scalars(select(AIModel.id)))
+    order = list(dict.fromkeys(int(i) for i in model_ids if int(i) in existing))
+    set_setting(db, "model_priority", order)
+    set_setting(db, "default_model_id", order[0] if order else None)
+    set_setting(db, "fallback_model_id", order[1] if len(order) > 1 else None)
+    return order
+
+
+def resolve_chain(db: Session, client: Client) -> list[ModelConfig]:
+    """Models to try for a client, in order: its own model (if set), then the priority list."""
+    ids = ([client.ai_model_id] if client.ai_model_id else []) + model_priority(db)
+    rows = [db.get(AIModel, i) for i in dict.fromkeys(ids)]
+    return [ModelConfig.from_row(r) for r in rows if r is not None]
 
 
 def record_test(db: Session, model: AIModel, ok: bool, message: str) -> None:
@@ -180,16 +205,6 @@ def list_models(db: Session) -> list[AIModel]:
 
 
 def resolve_for_client(db: Session, client: Client) -> tuple[ModelConfig | None, ModelConfig | None]:
-    """Return (primary, fallback) configs for a client: its own model or the system default."""
-    primary_row = client.ai_model
-    if primary_row is None:
-        default_id = get_setting(db, "default_model_id")
-        primary_row = db.get(AIModel, default_id) if default_id else None
-    fallback_id = get_setting(db, "fallback_model_id")
-    fallback_row = db.get(AIModel, fallback_id) if fallback_id else None
-    if fallback_row is not None and primary_row is not None and fallback_row.id == primary_row.id:
-        fallback_row = None
-    return (
-        ModelConfig.from_row(primary_row) if primary_row else None,
-        ModelConfig.from_row(fallback_row) if fallback_row else None,
-    )
+    """(first, second) of :func:`resolve_chain`, for code that only needs two."""
+    chain = resolve_chain(db, client)
+    return (chain[0] if chain else None, chain[1] if len(chain) > 1 else None)
