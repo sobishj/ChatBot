@@ -85,6 +85,54 @@ def validate_watch_path(raw: str) -> str:
     return str(resolved)
 
 
+MAX_LISTED_FOLDERS = 500
+
+
+def browse_watch_folders(raw: str | None = None) -> dict[str, Any]:
+    """Sub-folders of a folder under WATCHED_DIR (the root by default), for the folder picker.
+
+    Each entry counts the supported files directly inside it. Paths never leave WATCHED_DIR.
+    """
+    root = get_settings().watched_dir.resolve()
+    if not root.is_dir():
+        raise DocumentError(f"{root} is not available. Check WATCHED_HOST_DIR in .env and restart.")
+    current = Path(validate_watch_path(raw)) if raw and raw.strip() else root
+
+    def summary(folder: Path) -> tuple[int, int]:
+        files = folders = 0
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        folders += 1
+                    elif entry.is_file() and is_supported(entry.name):
+                        files += 1
+        except OSError:
+            pass
+        return files, folders
+
+    subfolders = []
+    with os.scandir(current) as entries:
+        for entry in sorted(entries, key=lambda e: e.name.lower()):
+            if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
+                continue
+            files, folders = summary(Path(entry.path))
+            subfolders.append({"name": entry.name, "path": str(Path(entry.path)), "files": files, "folders": folders})
+            if len(subfolders) >= MAX_LISTED_FOLDERS:
+                break
+    files_here, _ = summary(current)
+    return {
+        "root": str(root),
+        "path": str(current),
+        "parent": str(current.parent) if current != root else None,
+        "files": files_here,
+        "folders": subfolders,
+        "host_dir": os.environ.get("WATCHED_HOST_DIR") or "./watched",
+    }
+
+
 def source_root(client: Client, source: str) -> Path | None:
     if source == "upload":
         return uploads_dir(client)

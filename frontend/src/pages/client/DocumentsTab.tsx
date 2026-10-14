@@ -261,6 +261,7 @@ function WatchedFolder({ client, data, isSuper, onChanged, onScan, scanning }: {
   const [path, setPath] = useState(data.settings.watch_path ?? "");
   const [interval, setInterval] = useState(data.settings.scan_interval_minutes);
   const [error, setError] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   const { busy, run } = useAction();
   const save = () => run(async () => {
     setError("");
@@ -274,14 +275,19 @@ function WatchedFolder({ client, data, isSuper, onChanged, onScan, scanning }: {
   return (
     <Card
       title="Watched folder"
-      subtitle={<>The worker scans a server folder on a schedule and indexes new or changed files. Folders must be inside <code>{data.watched_root}</code>, which is mounted from the host (<code>WATCHED_HOST_DIR</code> in <code>.env</code>). Mount network shares on the host first.</>}
+      subtitle={<>Index a folder on the server automatically instead of uploading files: new and changed files are indexed on every scan, deleted ones are removed. Put the files in the server's watched folder (<code>WATCHED_HOST_DIR</code> in <code>.env</code>, by default <code>watched</code> in the app's folder), then choose the client's sub-folder here.</>}
       actions={data.settings.watch_path && <Button icon="refresh" disabled={scanning} onClick={onScan}>Scan now</Button>}
     >
       <div className="stack">
         {error && <Alert kind="error">{error}</Alert>}
         {isSuper ? (
           <div className="form-grid">
-            <Field label="Folder path" htmlFor="wf-path" hint={`e.g. ${data.watched_root}/${client.client_id}. Leave empty to disconnect.`}><input id="wf-path" className="input mono" value={path} onChange={(e) => setPath(e.target.value)} placeholder={`${data.watched_root}/${client.client_id}`} /></Field>
+            <Field label="Folder" htmlFor="wf-path" hint="Choose with Browse, or type a path. Leave empty to disconnect.">
+              <div className="row" style={{ flexWrap: "nowrap" }}>
+                <input id="wf-path" className="input mono" value={path} onChange={(e) => setPath(e.target.value)} placeholder={`${data.watched_root}/${client.client_id}`} />
+                <Button icon="folder" onClick={() => setBrowsing(true)}>Browse…</Button>
+              </div>
+            </Field>
             <Field label="Scan every (minutes)" htmlFor="wf-int"><input id="wf-int" className="input" type="number" min={5} max={10080} value={interval} onChange={(e) => setInterval(Number(e.target.value))} /></Field>
           </div>
         ) : (
@@ -292,6 +298,70 @@ function WatchedFolder({ client, data, isSuper, onChanged, onScan, scanning }: {
           {isSuper && <Button kind="primary" loading={busy} onClick={save}>Save folder</Button>}
         </div>
       </div>
+      {browsing && <FolderPicker clientId={client.client_id} start={path} onClose={() => setBrowsing(false)} onPick={(p) => { setPath(p); setBrowsing(false); }} />}
     </Card>
+  );
+}
+
+interface FolderList {
+  root: string; path: string; parent: string | null; files: number; host_dir: string;
+  folders: { name: string; path: string; files: number; folders: number }[];
+}
+
+/** Browse the server's watched folder (not this computer's): the files have to be on the server. */
+function FolderPicker({ clientId, start, onClose, onPick }: { clientId: string; start: string; onClose: () => void; onPick: (path: string) => void }) {
+  const [list, setList] = useState<FolderList | null>(null);
+  const [error, setError] = useState("");
+  const open = useCallback((path: string | null) => {
+    setError("");
+    api<FolderList>(`/api/admin/clients/${clientId}/documents/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`)
+      .then(setList)
+      .catch((e) => {
+        if (path) open(null); // the typed path doesn't exist: start at the top instead
+        else setError((e as Error).message);
+      });
+  }, [clientId]);
+  useEffect(() => {
+    open(start.trim() || null);
+  }, [open, start]);
+
+  const relativeName = list ? (list.path === list.root ? "(top level)" : list.path.slice(list.root.length + 1)) : "";
+  return (
+    <Modal
+      title="Choose a folder on the server"
+      onClose={onClose}
+      wide
+      footer={<><Button onClick={onClose}>Cancel</Button><span className="spacer" /><Button kind="primary" disabled={!list} onClick={() => list && onPick(list.path)}>Use this folder</Button></>}
+    >
+      <div className="stack">
+        {error && <Alert kind="error">{error}</Alert>}
+        {list && (
+          <>
+            <p className="muted small" style={{ margin: 0 }}>
+              These are folders on the server, inside its watched folder (<code>{list.host_dir}</code> on the host, <code>{list.root}</code> in the app).
+              To add one, create it there (for example <code>{list.host_dir}/{clientId}</code>) and copy the documents into it.
+            </p>
+            <div className="row between">
+              <span><strong className="mono">{relativeName}</strong> <span className="small muted">· {list.files} document{list.files === 1 ? "" : "s"} here</span></span>
+              {list.parent && <Button size="sm" onClick={() => open(list.parent)}>↑ Up</Button>}
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 340, overflowY: "auto" }}>
+              <table className="table">
+                <tbody>
+                  {list.folders.map((f) => (
+                    <tr key={f.path} style={{ cursor: "pointer" }} onClick={() => open(f.path)}>
+                      <td>📁 <strong>{f.name}</strong></td>
+                      <td className="small muted">{f.files} document{f.files === 1 ? "" : "s"}{f.folders ? ` · ${f.folders} folder${f.folders === 1 ? "" : "s"}` : ""}</td>
+                      <td className="num"><Button size="sm" onClick={(e) => { e.stopPropagation(); onPick(f.path); }}>Choose</Button></td>
+                    </tr>
+                  ))}
+                  {list.folders.length === 0 && <tr><td className="muted">No sub-folders here.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }

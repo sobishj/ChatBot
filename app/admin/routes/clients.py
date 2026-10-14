@@ -25,6 +25,7 @@ from app.db.models import AIModel, Chunk, Client, Document, Job, Page, User
 from app.db.session import get_db, session_scope
 from app.documents.service import (
     DocumentError,
+    browse_watch_folders,
     delete_document,
     document_to_dict,
     save_upload,
@@ -360,6 +361,18 @@ def update_document_answering(body: DocAnsweringIn, client: Client = Depends(get
     client.document_settings = settings
     db.commit()
     return {"settings": document_settings(client)}
+
+
+@router.get("/{client_id}/documents/folders")
+def browse_folders(
+    path: str | None = Query(default=None, max_length=1000), client: Client = Depends(get_client_for_user), user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Folder picker for the watched folder: sub-folders of a folder under the watched root (super admins)."""
+    _require_super(user)
+    try:
+        return browse_watch_folders(path)
+    except DocumentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/{client_id}/documents/settings")

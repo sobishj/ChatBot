@@ -168,6 +168,7 @@ def test_client_admin_restrictions(db: Session, embedder, monkeypatch: pytest.Mo
     assert ann.get("/api/admin/system").status_code == 403
     assert ann.put("/api/admin/clients/client-a/model", json={"ai_model_id": None}).status_code == 403
     assert ann.put("/api/admin/clients/client-a/domains", json={"allowed_domains": ["evil.test"]}).status_code == 403
+    assert ann.get("/api/admin/clients/client-a/documents/folders").status_code == 403  # server folders: super admins only
     # Allowed: branding and stats for their own client
     assert ann.put("/api/admin/clients/client-a/branding", json={"bot_name": "Ana"}).status_code == 200
     assert ann.get("/api/admin/clients/client-a/stats").status_code == 200
