@@ -1,6 +1,6 @@
 // Chat exactly as a visitor would, with diagnostics (confidence, model, timing, retrieved chunks).
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api } from "../../api";
+import { apiStream } from "../../api";
 import { Badge, Button, Card, Empty } from "../../components/ui";
 import { duration, money } from "../../format";
 import type { TabProps } from "./ClientDetail";
@@ -24,7 +24,7 @@ interface Answer {
   action_results: { action: string; ok: boolean; status_code: number | null; error: string | null; response_ms: number; params: Record<string, unknown>; response: string | null }[];
 }
 
-type Turn = { question: string; answer?: Answer; failed?: string; decided?: boolean };
+type Turn = { question: string; answer?: Answer; partial?: string; failed?: string; decided?: boolean };
 
 /** **bold** as the widget shows it; everything else stays plain text (no HTML from the model). */
 const withBold = (text: string) => text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
@@ -53,9 +53,16 @@ export function TestChatTab({ client }: TabProps) {
     // Any new message settles an open confirmation (the server drops it too).
     setTurns((t) => [...t.map((x) => (x.answer?.confirmation ? { ...x, decided: true } : x)), { question: q }]);
     try {
-      const answer = await api<Answer>(`/api/admin/clients/${client.client_id}/test-chat`, { body: { session_id: session, message: q, confirm: button?.confirm ?? null } });
-      setTurns((t) => t.map((x, i) => (i === index ? { ...x, answer } : x)));
-      setSelected(index);
+      // Streamed like the widget: the answer appears word by word, diagnostics come with the last event.
+      await apiStream(`/api/admin/clients/${client.client_id}/test-chat/stream`, { session_id: session, message: q, confirm: button?.confirm ?? null }, (ev) => {
+        if (ev.t === "delta") {
+          setTurns((t) => t.map((x, i) => (i === index ? { ...x, partial: (x.partial ?? "") + ev.text } : x)));
+        } else if (ev.t === "done") {
+          const { t: _kind, ...answer } = ev;
+          setTurns((t) => t.map((x, i) => (i === index ? { ...x, answer: answer as Answer, partial: undefined } : x)));
+          setSelected(index);
+        }
+      });
     } catch (err) {
       setTurns((t) => t.map((x, i) => (i === index ? { ...x, failed: (err as Error).message } : x)));
     } finally {
@@ -95,7 +102,8 @@ export function TestChatTab({ client }: TabProps) {
                 {t.failed && <div className="bubble bot" style={{ color: "var(--danger)" }}>{t.failed}</div>}
               </div>
             ))}
-            {busy && <div className="bubble bot"><span className="spinner" /></div>}
+            {busy && turns[turns.length - 1]?.partial && !turns[turns.length - 1]?.answer && <div className="bubble bot">{withBold(turns[turns.length - 1].partial ?? "")}</div>}
+            {busy && !turns[turns.length - 1]?.partial && <div className="bubble bot"><span className="spinner" /></div>}
           </div>
           <form className="chat-input" onSubmit={send}>
             <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask a question as a visitor would…" aria-label="Question" maxLength={1000} />

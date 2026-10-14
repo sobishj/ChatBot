@@ -173,3 +173,45 @@ export interface Stats {
   languages: { language: string; count: number }[];
   models: { model: string; count: number; input_tokens: number; output_tokens: number; cost: number; fallbacks: number }[];
 }
+
+/** POST and read a server-sent-event stream: calls onEvent for each `data:` JSON event. */
+export async function apiStream(path: string, body: unknown, onEvent: (event: any) => void): Promise<void> {
+  const resp = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify(body),
+    credentials: "same-origin",
+  });
+  if (!resp.ok || !resp.body) {
+    let detail = resp.statusText || "Request failed";
+    try {
+      const data = await resp.json();
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      /* not JSON */
+    }
+    listeners.forEach((fn) => fn(resp.status, detail));
+    throw new ApiError(resp.status, detail);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handle = (raw: string) => {
+    if (!raw.startsWith("data:")) return;
+    try {
+      onEvent(JSON.parse(raw.slice(5)));
+    } catch {
+      /* incomplete or invalid event */
+    }
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    parts.forEach(handle);
+  }
+  buffer += decoder.decode();
+  if (buffer) handle(buffer);
+}

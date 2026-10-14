@@ -25,7 +25,6 @@ from app.db.models import AIModel, Chunk, Client, Document, Job, Page, User
 from app.db.session import get_db, session_scope
 from app.documents.service import (
     DocumentError,
-    browse_watch_folders,
     delete_document,
     document_to_dict,
     save_upload,
@@ -363,18 +362,6 @@ def update_document_answering(body: DocAnsweringIn, client: Client = Depends(get
     return {"settings": document_settings(client)}
 
 
-@router.get("/{client_id}/documents/folders")
-def browse_folders(
-    path: str | None = Query(default=None, max_length=1000), client: Client = Depends(get_client_for_user), user: User = Depends(require_user)
-) -> dict[str, Any]:
-    """Folder picker for the watched folder: sub-folders of a folder under the watched root (super admins)."""
-    _require_super(user)
-    try:
-        return browse_watch_folders(path)
-    except DocumentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @router.put("/{client_id}/documents/settings")
 def update_document_settings(
     body: DocSettingsIn, client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)
@@ -527,6 +514,25 @@ class TestChatIn(BaseModel):
 def test_chat(body: TestChatIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Chat exactly like a visitor (same pipeline), with diagnostics. Logged with channel 'test'."""
     result = answer_question(db, client, body.session_id, body.message, channel="test", confirm=body.confirm)
+    return _test_chat_payload(result, get_setting(db, "confidence_threshold"))
+
+
+@router.post("/{client_id}/test-chat/stream")
+def test_chat_stream(body: TestChatIn, client: Client = Depends(get_client_for_user), db: Session = Depends(get_db)) -> StreamingResponse:
+    """Test chat with the answer arriving word by word, like the widget; diagnostics come with the final event."""
+    from app.api.public import sse
+    from app.chat.stream import stream_answer
+
+    client_pk, threshold = client.id, get_setting(db, "confidence_threshold")
+
+    def events() -> Iterator[str]:
+        for kind, value in stream_answer(client_pk, body.session_id, body.message, "test", body.confirm):
+            yield sse({"t": "delta", "text": value} if kind == "delta" else {"t": "done", **_test_chat_payload(value, threshold)})
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _test_chat_payload(result: Any, threshold: Any) -> dict[str, Any]:
     return {
         "confirmation": result.confirmation,
         "action_results": result.action_results,
@@ -534,7 +540,7 @@ def test_chat(body: TestChatIn, client: Client = Depends(get_client_for_user), d
         "sources": result.sources,
         "answered": result.answered,
         "confidence": result.confidence,
-        "threshold": get_setting(db, "confidence_threshold"),
+        "threshold": threshold,
         "model_name": result.model_name,
         "used_fallback": result.used_fallback,
         "response_ms": result.response_ms,

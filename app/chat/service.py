@@ -139,48 +139,84 @@ def answer_question(
         if actions:
             return answer_with_actions(db, client, session_id, message, channel, actions, embedder, llm, tool_llm, confirm)
 
-    started = time.perf_counter()
-    question = mask_pii(message.strip())[:MAX_MESSAGE_CHARS]
-    b = branding(client)
-    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "timezone"])
-    language = detect_language(question, b.get("default_language") or "en")
-    response = ChatResponse(answer=UNAVAILABLE_ANSWER, language=language)
-
+    prepared = prepare_answer(db, client, session_id, message, channel)
     try:
-        embedder = embedder or get_embedder()
-        history = load_history(db, client.id, session_id, channel)
-        result = search(db, embedder, client.id, question, previous_question=history[-1][0] if history else None)
-        response.hits = result.hits
-        response.confidence = round(result.confidence, 4)
-        doc_settings = document_settings(client)
+        primary, fallback, messages = prepared.model_inputs(db, embedder)
+        llm_result, used_fallback = _call_with_fallback(primary, fallback, messages, llm)
+        prepared.apply(llm_result, used_fallback)
+    except (LLMError, EmbeddingNotReady) as exc:
+        prepared.fail(exc)
+    return prepared.finish(db)
+
+
+@dataclass
+class PreparedAnswer:
+    """One plain (non-actions) answer in progress: shared by normal and streamed answers."""
+
+    client: Client
+    session_id: str
+    channel: str
+    question: str
+    language: str | None
+    settings: dict[str, Any]
+    response: ChatResponse
+    started: float
+    model_id: int | None = None
+
+    def model_inputs(self, db: Session, embedder: Embedder | None = None) -> tuple[ModelConfig, ModelConfig | None, list[dict[str, str]]]:
+        """Search, build the prompt and pick the models. Raises LLMError / EmbeddingNotReady."""
+        b = branding(self.client)
+        history = load_history(db, self.client.id, self.session_id, self.channel)
+        result = search(db, embedder or get_embedder(), self.client.id, self.question, previous_question=history[-1][0] if history else None)
+        self.response.hits = result.hits
+        self.response.confidence = round(result.confidence, 4)
+        doc_settings = document_settings(self.client)
         messages = build_messages(
-            settings["system_prompt"], b["bot_name"], client.name, result.hits, history, question,
-            doc_settings.get("key_facts") or "", local_now(settings["timezone"]),
+            self.settings["system_prompt"], b["bot_name"], self.client.name, result.hits, history, self.question,
+            doc_settings.get("key_facts") or "", local_now(self.settings["timezone"]),
         )
-        primary, fallback = resolve_for_client(db, client)
+        primary, fallback = resolve_for_client(db, self.client)
         if primary is None:
             raise LLMError("No AI model is configured. Add one in Settings → AI Models.")
-        llm_result, used_fallback = _call_with_fallback(primary, fallback, messages, llm)
+        return primary, fallback, messages
+
+    def apply(self, llm_result: LLMResult, used_fallback: bool) -> None:
+        response = self.response
         answer, flagged_no_answer = parse_answer(llm_result.text)
         response.answer = answer or UNAVAILABLE_ANSWER
         response.answered = (
-            bool(answer) and not flagged_no_answer and bool(result.hits) and result.confidence >= float(settings["confidence_threshold"])
+            bool(answer) and not flagged_no_answer and bool(response.hits)
+            and response.confidence >= float(self.settings["confidence_threshold"])
         )
-        response.sources = sources_from_hits(result.hits) if response.answered else []
+        response.sources = sources_from_hits(response.hits) if response.answered else []
         response.model_name = llm_result.model_name
         response.used_fallback = used_fallback
         response.input_tokens = llm_result.input_tokens
         response.output_tokens = llm_result.output_tokens
         response.cost = llm_result.cost
-        model_id = llm_result.model_id
-    except (LLMError, EmbeddingNotReady) as exc:
-        logger.warning("Chat failed for client %s: %s", client.client_id, exc)
-        response.error = str(exc)[:1000]
-        model_id = None
+        self.model_id = llm_result.model_id
 
-    response.response_ms = int((time.perf_counter() - started) * 1000)
-    save_question(db, client, session_id, channel, question, language, response, model_id)
-    return response
+    def fail(self, exc: Exception) -> None:
+        logger.warning("Chat failed for client %s: %s", self.client.client_id, exc)
+        self.response.answer = UNAVAILABLE_ANSWER
+        self.response.error = str(exc)[:1000]
+        self.model_id = None
+
+    def finish(self, db: Session) -> ChatResponse:
+        self.response.response_ms = int((time.perf_counter() - self.started) * 1000)
+        save_question(db, self.client, self.session_id, self.channel, self.question, self.language, self.response, self.model_id)
+        return self.response
+
+
+def prepare_answer(db: Session, client: Client, session_id: str, message: str, channel: str) -> PreparedAnswer:
+    question = mask_pii(message.strip())[:MAX_MESSAGE_CHARS]
+    b = branding(client)
+    settings = get_settings_map(db, ["system_prompt", "confidence_threshold", "timezone"])
+    language = detect_language(question, b.get("default_language") or "en")
+    return PreparedAnswer(
+        client=client, session_id=session_id, channel=channel, question=question, language=language, settings=settings,
+        response=ChatResponse(answer=UNAVAILABLE_ANSWER, language=language), started=time.perf_counter(),
+    )
 
 
 def save_question(

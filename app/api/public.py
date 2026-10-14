@@ -13,13 +13,15 @@ Security model
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -86,6 +88,7 @@ def _client_for_origin(db: Session, client_id: str, request: Request) -> tuple[C
 
 
 @router.options("/api/chat")
+@router.options("/api/chat/stream")
 @router.options("/api/client/{client_id}/config")
 def preflight(request: Request) -> Response:
     origin = request.headers.get("origin")
@@ -121,8 +124,8 @@ class ChatIn(BaseModel):
     confirm: bool | None = None
 
 
-@router.post("/api/chat")
-def chat(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+def _check_chat(db: Session, body: ChatIn, request: Request) -> tuple[Client, dict[str, str], JSONResponse | None]:
+    """Origin, rate limits and empty messages; returns (client, CORS headers, error response or None)."""
     client, origin = _client_for_origin(db, body.client_id, request)
     headers = cors_headers(origin)
     limits = get_setting(db, "rate_limits") or {}
@@ -130,15 +133,49 @@ def chat(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> JSONR
     if not rate_limit.hit(db, f"chat:ip:{ip}", int(limits.get("chat_per_ip_per_minute", 20)), 60) or not rate_limit.hit(
         db, f"chat:client:{client.id}", int(limits.get("chat_per_client_per_minute", 300)), 60
     ):
-        return JSONResponse({"detail": "Too many messages. Please wait a moment and try again."}, status_code=429, headers=headers)
+        return client, headers, JSONResponse({"detail": "Too many messages. Please wait a moment and try again."}, status_code=429, headers=headers)
     if not body.message.strip():
-        return JSONResponse({"detail": "Empty message."}, status_code=400, headers=headers)
-    result = answer_question(db, client, body.session_id, body.message, channel="widget", confirm=body.confirm)
-    # Visitors get the answer only: no source pages or document names (they're kept in the admin's logs).
+        return client, headers, JSONResponse({"detail": "Empty message."}, status_code=400, headers=headers)
+    return client, headers, None
+
+
+def public_reply(result: Any) -> dict[str, Any]:
+    """What visitors get: the answer only, no source pages or document names (kept in the admin's logs)."""
     reply: dict[str, Any] = {"answer": result.answer, "sources": [], "answered": result.answered}
     if result.confirmation:  # only the summary: action definitions and API details stay on the server
         reply["confirmation"] = {"action": result.confirmation["action"], "summary": result.confirmation["summary"]}
-    return JSONResponse(reply, headers=headers)
+    return reply
+
+
+@router.post("/api/chat")
+def chat(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+    client, headers, error = _check_chat(db, body, request)
+    if error is not None:
+        return error
+    result = answer_question(db, client, body.session_id, body.message, channel="widget", confirm=body.confirm)
+    return JSONResponse(public_reply(result), headers=headers)
+
+
+def sse(event: dict[str, Any]) -> str:
+    return "data: " + json.dumps(event, ensure_ascii=False, default=str) + "\n\n"
+
+
+@router.post("/api/chat/stream")
+def chat_stream(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> Response:
+    """Like /api/chat, but the answer arrives word by word (server-sent events): {"t": "delta", "text"} …
+    then {"t": "done", "answer", "answered", "confirmation"?}."""
+    from app.chat.stream import stream_answer
+
+    client, headers, error = _check_chat(db, body, request)
+    if error is not None:
+        return error
+    client_pk = client.id
+
+    def events() -> Iterator[str]:
+        for kind, value in stream_answer(client_pk, body.session_id, body.message, "widget", body.confirm):
+            yield sse({"t": "delta", "text": value} if kind == "delta" else {"t": "done", **public_reply(value)})
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={**headers, "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/widget.js")

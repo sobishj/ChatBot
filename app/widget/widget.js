@@ -260,7 +260,7 @@
       log.innerHTML = "";
       if (config.greeting) log.appendChild(messageEl({ role: "bot", text: config.greeting }));
       state.messages.forEach(function (m) { log.appendChild(messageEl(m)); });
-      if (busy) {
+      if (busy && !(streaming && streaming.text)) { // dots until the first words arrive
         var typing = document.createElement("div");
         typing.className = "msg bot"; typing.setAttribute("aria-label", "…");
         typing.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
@@ -280,6 +280,66 @@
 
     function add(m) { state.messages.push(m); save(); render(); }
 
+    var streaming = null; // the bot message currently being written (streamed answers)
+
+    function requestBody(text, confirm) {
+      return JSON.stringify(typeof confirm === "boolean"
+        ? { client_id: clientId, session_id: state.sessionId, message: text, confirm: confirm }
+        : { client_id: clientId, session_id: state.sessionId, message: text });
+    }
+
+    // Whole answer in one response (older servers, or browsers without streaming).
+    function sendWhole(body) {
+      return fetch(apiBase + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (data) { return { status: r.status, data: data }; });
+        })
+        .then(function (res) {
+          if (res.status === 200) add({ role: "bot", text: res.data.answer || t.error, confirm: !!res.data.confirmation });
+          else add({ role: "bot", text: res.status === 429 ? t.busy : t.error });
+        });
+    }
+
+    // The answer appears word by word as the model writes it.
+    function sendStreamed(body) {
+      var queued = false;
+      function paint() {
+        if (queued) return;
+        queued = true;
+        (window.requestAnimationFrame || setTimeout)(function () { queued = false; render(); });
+      }
+      function onEvent(raw) {
+        if (raw.indexOf("data:") !== 0) return;
+        var ev;
+        try { ev = JSON.parse(raw.slice(5)); } catch (e) { return; }
+        if (!streaming) { streaming = { role: "bot", text: "" }; state.messages.push(streaming); }
+        if (ev.t === "delta") { streaming.text += ev.text || ""; paint(); }
+        else if (ev.t === "done") { streaming.text = ev.answer || t.error; streaming.confirm = !!ev.confirmation; save(); }
+      }
+      return fetch(apiBase + "/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+        .then(function (r) {
+          if (r.status === 404 || r.status === 405) return sendWhole(body);
+          if (r.status !== 200) { add({ role: "bot", text: r.status === 429 ? t.busy : t.error }); return; }
+          if (!r.body || !r.body.getReader || typeof TextDecoder === "undefined") {
+            return r.text().then(function (all) { all.split("\n\n").forEach(onEvent); });
+          }
+          var reader = r.body.getReader();
+          var decoder = new TextDecoder();
+          var buffer = "";
+          function pump() {
+            return reader.read().then(function (chunk) {
+              if (chunk.done) { buffer += decoder.decode(); if (buffer) onEvent(buffer); return; }
+              buffer += decoder.decode(chunk.value, { stream: true });
+              var parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              parts.forEach(onEvent);
+              return pump();
+            });
+          }
+          return pump();
+        });
+    }
+
     function send(text, confirm) {
       text = text.trim();
       if (!text || busy) return;
@@ -291,26 +351,17 @@
       if (preview) {
         setTimeout(function () {
           busy = false; sendBtn.disabled = false;
-          add({ role: "bot", text: "This is a preview. Use the Test chat tab to try real answers.", sources: [] });
+          add({ role: "bot", text: "This is a preview. Use the Test chat tab to try real answers." });
         }, 700);
         return;
       }
-      fetch(apiBase + "/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(typeof confirm === "boolean"
-          ? { client_id: clientId, session_id: state.sessionId, message: text, confirm: confirm }
-          : { client_id: clientId, session_id: state.sessionId, message: text })
-      })
-        .then(function (r) {
-          return r.json().catch(function () { return {}; }).then(function (data) { return { status: r.status, data: data }; });
+      streaming = null;
+      sendStreamed(requestBody(text, confirm))
+        .catch(function () {
+          if (!streaming) add({ role: "bot", text: t.error });
+          else if (!streaming.text) streaming.text = t.error;
         })
-        .then(function (res) {
-          if (res.status === 200) add({ role: "bot", text: res.data.answer || t.error, sources: res.data.sources || [], confirm: !!res.data.confirmation });
-          else add({ role: "bot", text: res.status === 429 ? t.busy : t.error });
-        })
-        .catch(function () { add({ role: "bot", text: t.error }); })
-        .then(function () { busy = false; sendBtn.disabled = false; render(); input.focus(); });
+        .then(function () { streaming = null; busy = false; sendBtn.disabled = false; save(); render(); input.focus(); });
     }
 
     function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 110) + "px"; }

@@ -53,13 +53,14 @@ def render_system_prompt(template: str, bot_name: str, client_name: str, context
 DOCUMENTS_RULE = (
     "ADDITIONAL RULE: Besides {client_name}'s own information, the CONTEXT may include uploaded documents (sources marked "
     "\"document:\") on other subjects, for example another product's manual or a letter. Answer any question these documents "
-    "cover, even if the subject is unrelated to {client_name}: summarise what they say about it, including partial information "
-    "(for example what a product or system does), instead of saying you have no information. For such subjects, explain the "
-    "documents' content neutrally instead of speaking as {client_name}, and don't call the subject another company. "
-    "When the documents describe the subject, answer directly: don't begin with a disclaimer such as \"I don't have "
-    "information about this\" or \"this isn't related to us\". This includes documents about a part of the subject: for "
-    "example, if the visitor asks \"what is X?\" and a document describes X's API, wrapper or manual, answer with what it "
-    "says about X. Never add facts that are not in the CONTEXT."
+    "cover, even if the subject is unrelated to {client_name}, including partial information (for example what a product or "
+    "system does), instead of saying you have no information. For such subjects, explain neutrally instead of speaking as "
+    "{client_name}, and don't call the subject another company. Answer directly: don't begin with a disclaimer such as "
+    "\"I don't have information about this\" or \"this isn't related to us\". This includes documents about a part of the "
+    "subject: for example, if the visitor asks \"what is X?\" and a document describes X's API, wrapper or manual, answer with "
+    "what it says about X. State the information as plain facts, as if you simply know it: never mention documents, "
+    "documentation, files, sources or \"the information I have\" (no \"the documents describe…\", \"based on the "
+    "documentation…\", \"according to…\"). Never add facts that are not in the CONTEXT."
 )
 SUBJECT_RULE = (
     "SUBJECT RULE: When the visitor doesn't say which shop, product or service they mean and it isn't clear from the "

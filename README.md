@@ -35,7 +35,7 @@ with low confidence are marked *unanswered* so they show up in Stats.
 3. [Setup wizard](#3-setup-wizard)
 4. [Adding a client](#4-adding-a-client)
 5. [Website crawling](#5-website-crawling)
-6. [Documents: upload and watched folders](#6-documents-upload-and-watched-folders)
+6. [Documents](#6-documents)
 7. [AI models](#7-ai-models)
 8. [API actions (optional)](#8-api-actions-optional)
 9. [Embedding the widget](#9-embedding-the-widget)
@@ -141,8 +141,7 @@ re-indexes all content once.
 
 When an upload would take a local model more than about 10 minutes, it isn't indexed right
 away: the Documents tab shows the estimate next to each cloud model's time and cost, and the
-admin chooses to index locally anyway or switch to a cloud model. Files from watched folders
-are always indexed with the current model.
+admin chooses to index locally anyway or switch to a cloud model.
 
 ## 3. Setup wizard
 
@@ -175,7 +174,7 @@ The client detail page has these tabs:
 |---|---|
 | Overview | Counts, running jobs, activate/deactivate, delete |
 | Website | **Crawl now** with live progress, crawl settings, crawled pages (view the exact text learned, remove a page) |
-| Documents | Drag-and-drop upload, watched folder, re-index |
+| Documents | Drag-and-drop upload, Use checkboxes, key information, re-index |
 | AI model | Which saved model answers this client (default = system default) |
 | Branding | Colour, logo, bot name, greeting, language, position, "Powered by", **live preview** |
 | Allowed domains | Websites allowed to use this bot (super admin only) |
@@ -207,7 +206,7 @@ The client detail page has these tabs:
 Automatic re-crawls run daily or weekly at a time you choose (Settings → Crawl schedule).
 They re-crawl every active client and re-check their documents.
 
-## 6. Documents: upload and watched folders
+## 6. Documents
 
 Supported formats: **PDF, DOCX, XLSX, TXT, MD**, up to 1 GB each. PDF pages without a text
 layer (scans) are read with Tesseract OCR, several pages in parallel (one per CPU core by default).
@@ -216,29 +215,6 @@ each extra language slows OCR down. Pages that already contain text skip OCR ent
 
 **Upload** (default): drag files into the Documents tab. They're stored on the server in
 `DATA_DIR/clients/<client_id>/documents/` and indexed automatically.
-
-**Watched folder** (mainly for on-premise): the worker scans a server folder every N minutes,
-and on **Scan now**. It indexes new or changed files and removes passages of deleted files.
-Each file shows its source (*Uploaded* or *Folder*). Both sources can be used together.
-
-The containers can only see folders mounted into them. The host folder `WATCHED_HOST_DIR`
-(default `./watched`) is mounted **read-only** at `/mnt/watched`.
-
-```bash
-# On the host: put files (or mount a network share) under the watched folder
-mkdir -p watched/hr-policies
-cp ~/policies/*.pdf watched/hr-policies/
-
-# Windows/SMB share (mount on the host, then restart so the containers see the new mount)
-sudo mount -t cifs //fileserver/policies ./watched/hr-policies -o ro,username=svc_reader
-docker compose restart app worker
-```
-
-Then set the folder in **Documents → Watched folder**, e.g. `/mnt/watched/hr-policies`. The
-path is checked: it must exist, be readable and lie inside `/mnt/watched`.
-
-To use a different host location, set `WATCHED_HOST_DIR=/srv/shared-docs` in `.env` and run
-`docker compose up -d`.
 
 Indexing runs in the worker, so it carries on when you leave the Documents tab or close the
 browser; the tab shows the progress again when you come back. If the worker restarts in the
@@ -505,7 +481,7 @@ app/
   chat/         PII masking, language detection, prompt, chat service (fallback, logging)
   crawler/      robots/sitemaps/link crawler, text extraction, crawl service
   db/           SQLAlchemy models, Alembic migrations (run automatically at startup)
-  documents/    PDF/DOCX/XLSX/TXT/MD readers, uploads, watched folders
+  documents/    PDF/DOCX/XLSX/TXT/MD readers, OCR, uploads
   embeddings/   local models (download with progress, loading), cloud embedding APIs, model catalog
   indexer/      chunking (~500 tokens, 50 overlap), embedding, vector column management
   llm/          LiteLLM wrapper and provider presets

@@ -252,23 +252,3 @@ def test_contents_page_dot_leaders_are_removed(tmp_path: Path) -> None:
     assert "....." not in text and ". . . ." not in text
     assert "1 Document Overview … 3" in text and "Version 1.2.3 costs 4.50." in text  # normal dots are kept
 
-
-def test_browse_watch_folders_stays_inside_the_root(data_dirs: Path) -> None:
-    from app.documents.service import DocumentError, browse_watch_folders
-
-    root = data_dirs / "watched"
-    (root / "sprintgame" / "policies").mkdir(parents=True)
-    (root / "sprintgame" / "a.pdf").write_bytes(b"x")
-    (root / "sprintgame" / "b.txt").write_text("x")
-    (root / "sprintgame" / "skip.exe").write_bytes(b"x")
-    (root / ".hidden").mkdir()
-
-    top = browse_watch_folders()
-    assert top["parent"] is None and [f["name"] for f in top["folders"]] == ["sprintgame"]
-    assert top["folders"][0] == {"name": "sprintgame", "path": str((root / "sprintgame").resolve()), "files": 2, "folders": 1}
-    inside = browse_watch_folders(top["folders"][0]["path"])
-    assert inside["files"] == 2 and inside["parent"] == str(root.resolve()) and inside["folders"][0]["name"] == "policies"
-    with pytest.raises(DocumentError):
-        browse_watch_folders(str(root / ".." / ".."))  # can't climb out of the watched root
-    with pytest.raises(DocumentError):
-        browse_watch_folders(str(root / "missing"))

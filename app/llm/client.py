@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -295,6 +296,61 @@ def complete_with_tools(
         model_id=cfg.model_id,
         model_name=cfg.display_name or cfg.model_name,
         tool_calls=_parse_tool_calls(message) if tools else [],
+    )
+
+
+def stream_complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int | None = None) -> Iterator[str | LLMResult]:
+    """Like :func:`complete`, but yields the reply's text pieces as the model writes them, then one
+    final :class:`LLMResult` (full text, usage, cost). Raises :class:`LLMError` on failure."""
+    import litellm
+
+    litellm.telemetry = False
+    litellm.suppress_debug_info = True
+
+    kwargs = _litellm_kwargs(cfg)
+    if not kwargs.pop("_no_sampling", False):
+        kwargs["temperature"] = cfg.temperature
+    started = time.perf_counter()
+    chunks: list[Any] = []
+    try:
+        stream = litellm.completion(
+            messages=messages,
+            max_tokens=max_tokens or cfg.max_tokens,
+            timeout=cfg.timeout_seconds,
+            num_retries=0,
+            stream=True,
+            stream_options={"include_usage": True},
+            **kwargs,
+        )
+        for chunk in stream:
+            chunks.append(chunk)
+            try:
+                piece = chunk.choices[0].delta.content if chunk.choices else None
+            except (AttributeError, IndexError):
+                piece = None
+            if piece:
+                yield piece
+    except Exception as exc:  # noqa: BLE001 - LiteLLM raises many exception types
+        raise LLMError(_friendly_error(exc)) from exc
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+    text = "".join(c.choices[0].delta.content or "" for c in chunks if c.choices and getattr(c.choices[0].delta, "content", None))
+    response = None
+    try:
+        response = litellm.stream_chunk_builder(chunks, messages=messages)
+    except Exception:  # noqa: BLE001 - usage is nice to have; the answer is what matters
+        logger.debug("Could not rebuild the streamed response", exc_info=True)
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    yield LLMResult(
+        text=text.strip(),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        response_ms=elapsed_ms,
+        cost=estimate_cost(cfg, input_tokens, output_tokens, response),
+        model_id=cfg.model_id,
+        model_name=cfg.display_name or cfg.model_name,
     )
 
 
