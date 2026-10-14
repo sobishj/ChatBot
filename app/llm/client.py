@@ -152,6 +152,8 @@ def _claude_options(cfg: ModelConfig) -> dict[str, Any]:
 
 
 _GEMINI_VERSION_RE = re.compile(r"gemini-(\d+(?:\.\d+)?)")
+# Speech, image, live-audio and embedding models: not for chat, and they don't take reasoning settings.
+_GEMINI_NON_CHAT_RE = re.compile(r"tts|image|audio|live|embedding|veo|imagen|lyria|banana|robotics|computer-use|deep-research", re.I)
 
 
 def _fast_thinking(cfg: ModelConfig) -> dict[str, Any]:
@@ -161,7 +163,7 @@ def _fast_thinking(cfg: ModelConfig) -> dict[str, Any]:
     latency (about 1 s per answer) and cost without better answers. Thinking tokens
     also count against max_tokens, which can cut answers short.
     """
-    if cfg.provider != "gemini":
+    if cfg.provider != "gemini" or _GEMINI_NON_CHAT_RE.search(cfg.model_name):
         return {}
     match = _GEMINI_VERSION_RE.search(cfg.model_name.lower())
     if not match:
@@ -178,7 +180,7 @@ def _fast_thinking(cfg: ModelConfig) -> dict[str, Any]:
 
 def _gemini_may_think(cfg: ModelConfig) -> bool:
     """Gemini 2.5 Pro and 3+ always reason a little, and that counts against max_tokens."""
-    if cfg.provider != "gemini":
+    if cfg.provider != "gemini" or _GEMINI_NON_CHAT_RE.search(cfg.model_name):
         return False
     match = _GEMINI_VERSION_RE.search(cfg.model_name.lower())
     if not match:
@@ -214,6 +216,40 @@ def preload_litellm() -> None:
     threading.Thread(target=_run, name="litellm-preload", daemon=True).start()
 
 
+_THINKING_KEYS = ("thinkingConfig", "thinking", "allowed_openai_params")
+
+
+def _rejects_thinking(exc: Exception) -> bool:
+    """The provider refused a reasoning setting (e.g. a speech or image model, or an older model)."""
+    name = exc.__class__.__name__
+    return ("BadRequest" in name or "UnsupportedParams" in name) and bool(re.search(r"thinking", str(exc), re.I))
+
+
+def _relaxed(params: dict[str, Any]) -> dict[str, Any] | None:
+    """The next reasoning setting to try after a rejection: Gemini level minimal -> low -> none; otherwise none."""
+    level = (params.get("thinkingConfig") or {}).get("thinkingLevel")
+    if level == "minimal":
+        return {**params, "thinkingConfig": {"thinkingLevel": "low"}}
+    if any(k in params for k in _THINKING_KEYS):
+        return {k: v for k, v in params.items() if k not in _THINKING_KEYS}
+    return None
+
+
+def _completion(**params: Any) -> Any:
+    """litellm.completion; if the model rejects our reasoning setting, retry with a milder one, then none."""
+    import litellm
+
+    while True:
+        try:
+            return litellm.completion(**params)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it's a rejected reasoning setting
+            retry = _relaxed(params) if _rejects_thinking(exc) else None
+            if retry is None:
+                raise
+            logger.info("%s rejected the reasoning setting; retrying with a milder one", params.get("model"))
+            params = retry
+
+
 def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int | None = None) -> LLMResult:
     """Call the model and return text + usage. Raises :class:`LLMError` on any failure."""
     import litellm  # imported lazily: it is slow to import
@@ -224,7 +260,7 @@ def complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens: int |
     kwargs, cap = _request_kwargs(cfg, max_tokens)
     started = time.perf_counter()
     try:
-        response = litellm.completion(
+        response = _completion(
             messages=messages,
             max_tokens=cap,
             timeout=cfg.timeout_seconds,
@@ -309,7 +345,7 @@ def complete_with_tools(
         kwargs["tool_choice"] = "auto"
     started = time.perf_counter()
     try:
-        response = litellm.completion(
+        response = _completion(
             messages=messages,
             max_tokens=cap,
             timeout=cfg.timeout_seconds,
@@ -353,24 +389,28 @@ def stream_complete(cfg: ModelConfig, messages: list[dict[str, str]], max_tokens
     kwargs, cap = _request_kwargs(cfg, max_tokens)
     started = time.perf_counter()
     chunks: list[Any] = []
+    params: dict[str, Any] | None = dict(
+        messages=messages, max_tokens=cap, timeout=cfg.timeout_seconds, num_retries=0,
+        stream=True, stream_options={"include_usage": True}, **kwargs,
+    )
     try:
-        stream = litellm.completion(
-            messages=messages,
-            max_tokens=cap,
-            timeout=cfg.timeout_seconds,
-            num_retries=0,
-            stream=True,
-            stream_options={"include_usage": True},
-            **kwargs,
-        )
-        for chunk in stream:
-            chunks.append(chunk)
+        while params is not None:
             try:
-                piece = chunk.choices[0].delta.content if chunk.choices else None
-            except (AttributeError, IndexError):
-                piece = None
-            if piece:
-                yield piece
+                for chunk in _completion(**params):
+                    chunks.append(chunk)
+                    try:
+                        piece = chunk.choices[0].delta.content if chunk.choices else None
+                    except (AttributeError, IndexError):
+                        piece = None
+                    if piece:
+                        yield piece
+                params = None
+            except Exception as exc:  # noqa: BLE001 - a rejected reasoning setting shows up on the first chunk
+                retry = _relaxed(params) if not chunks and _rejects_thinking(exc) else None
+                if retry is None:
+                    raise
+                logger.info("%s rejected the reasoning setting; retrying with a milder one", params.get("model"))
+                params = retry
     except Exception as exc:  # noqa: BLE001 - LiteLLM raises many exception types
         raise LLMError(_friendly_error(exc)) from exc
     elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -462,7 +502,7 @@ def _fetch_model_list(provider_key: str, base: str, api_key: str | None, timeout
             names = [
                 m["name"].removeprefix("models/")
                 for m in resp.json().get("models", [])
-                if "generateContent" in m.get("supportedGenerationMethods", [])
+                if "generateContent" in m.get("supportedGenerationMethods", []) and not _GEMINI_NON_CHAT_RE.search(m["name"])
             ]
         else:  # OpenAI and OpenAI-compatible servers (incl. Ollama, vLLM, LM Studio)
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}

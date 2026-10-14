@@ -485,3 +485,50 @@ def test_thinking_is_switched_off_for_quick_answers_where_the_model_allows() -> 
     assert "thinking" not in opus and opus_cap == 600 + THINKING_HEADROOM  # can't switch off: room to think instead
     gpt, gpt_cap = _request_kwargs(ModelConfig(provider="openai", model_name="gpt-4o-mini", api_key="k", max_tokens=600), None)
     assert "thinking" not in gpt and gpt_cap == 600 and gpt["temperature"] == 0.2
+
+
+def test_rejected_reasoning_setting_is_dropped_and_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    import litellm
+
+    from app.llm import client as llm_client
+
+    calls: list[dict] = []
+
+    class BadRequestError(Exception):
+        pass
+
+    def fake(**params):
+        calls.append(dict(params))
+        if "thinkingConfig" in params:
+            raise BadRequestError('{"error": {"code": 400, "message": "Thinking level is not supported for this model."}}')
+        return "ok"
+
+    monkeypatch.setattr(litellm, "completion", fake)
+    assert llm_client._completion(model="gemini/x", thinkingConfig={"thinkingLevel": "minimal"}) == "ok"
+    # minimal -> low -> no setting
+    assert [c.get("thinkingConfig") for c in calls] == [{"thinkingLevel": "minimal"}, {"thinkingLevel": "low"}, None]
+
+    def other_error(**params):
+        raise BadRequestError("Invalid API key")
+
+    monkeypatch.setattr(litellm, "completion", other_error)
+    with pytest.raises(BadRequestError):
+        llm_client._completion(model="gemini/x", thinkingConfig={})
+
+
+def test_gemini_speech_and_image_models_get_no_reasoning_settings_and_are_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.llm import client as llm_client
+    from app.llm.client import ModelConfig, _fast_thinking, list_available_models
+
+    assert _fast_thinking(ModelConfig(provider="gemini", model_name="gemini-3.8-flash-tts")) == {}
+    assert _fast_thinking(ModelConfig(provider="gemini", model_name="gemini-3.5-flash")) != {}
+    llm_client._model_list_cache.clear()
+    models = {"models": [
+        {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.8-flash-tts", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.5-flash-image", "supportedGenerationMethods": ["generateContent"]},
+    ]}
+    monkeypatch.setattr(httpx.Client, "get", lambda self, url, params=None, headers=None, timeout=None: httpx.Response(200, json=models, request=httpx.Request("GET", url)))
+    assert list_available_models("gemini", None, "key") == ["gemini-3.8-flash"]
