@@ -77,11 +77,6 @@ export function TestChatTab({ client }: TabProps) {
                 {t.answer && (
                   <div className="bubble bot" style={{ cursor: "pointer", outline: selected === i ? "2px solid var(--accent-soft)" : undefined }} onClick={() => setSelected(i)}>
                     {withBold(t.answer.answer)}
-                    {t.answer.sources.length > 0 && (
-                      <div className="meta">
-                        {t.answer.sources.map((s) => s.url ? <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : <span key={s.title}>📄 {s.title}</span>)}
-                      </div>
-                    )}
                     {t.answer.confirmation && (
                       <div className="row" style={{ marginTop: 8 }}>
                         <Button size="sm" kind="primary" disabled={t.decided || busy} onClick={(ev) => { ev.stopPropagation(); send(undefined, { text: "Confirm", confirm: true }); }}>Confirm</Button>

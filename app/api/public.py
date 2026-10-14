@@ -134,7 +134,8 @@ def chat(body: ChatIn, request: Request, db: Session = Depends(get_db)) -> JSONR
     if not body.message.strip():
         return JSONResponse({"detail": "Empty message."}, status_code=400, headers=headers)
     result = answer_question(db, client, body.session_id, body.message, channel="widget", confirm=body.confirm)
-    reply: dict[str, Any] = {"answer": result.answer, "sources": result.sources, "answered": result.answered}
+    # Visitors get the answer only: no source pages or document names (they're kept in the admin's logs).
+    reply: dict[str, Any] = {"answer": result.answer, "sources": [], "answered": result.answered}
     if result.confirmation:  # only the summary: action definitions and API details stay on the server
         reply["confirmation"] = {"action": result.confirmation["action"], "summary": result.confirmation["summary"]}
     return JSONResponse(reply, headers=headers)

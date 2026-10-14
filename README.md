@@ -23,7 +23,7 @@ Everything is managed in a web admin UI. The terminal is needed once, to run `in
 **How an answer is made:** the question is masked (phone numbers and emails removed). Then
 hybrid search runs: pgvector similarity plus Postgres full-text search, merged with reciprocal
 rank fusion and always filtered by client. The model gets the top 6 passages plus the last 4
-messages of the conversation. The answer comes back with its sources and is logged. Answers
+messages of the conversation. Visitors get the answer only (no source links or document names); it is logged with its sources. Answers
 with low confidence are marked *unanswered* so they show up in Stats.
 
 ---
@@ -179,7 +179,7 @@ The client detail page has these tabs:
 | AI model | Which saved model answers this client (default = system default) |
 | Branding | Colour, logo, bot name, greeting, language, position, "Powered by", **live preview** |
 | Allowed domains | Websites allowed to use this bot (super admin only) |
-| Test chat | Chat as a visitor, with sources, confidence score, model used, response time and the retrieved passages |
+| Test chat | Chat as a visitor, with confidence score, model used, response time and the retrieved passages |
 | Embed code | The one-line script with a Copy button, plus guides for WordPress, Wix, Shopify, Squarespace, GTM and custom HTML |
 | Stats | Questions over 7/30/90 days, top 20 questions, unanswered questions, per-day chart, languages, tokens and cost |
 | Conversations | Searchable question/answer log (personal data masked), CSV export |
@@ -404,7 +404,7 @@ Copy the line from client → **Embed code**:
   keyboard accessible (Enter sends, Escape closes) and full-screen on phones.
 - Branding (colour, logo, greeting, position, language, "Powered by") is loaded from
   `/api/client/<id>/config`. That response contains branding only, no secrets.
-- Answers show their sources as links (web pages) or names (documents). The notice "Chats are
+- Visitors see only the answer, not where it came from (pages and documents stay private). The notice "Chats are
   recorded to improve service" is shown and editable in Settings → Privacy.
 - The widget only works on the client's **allowed domains**. Requests from other origins, or
   with no origin at all, are rejected.
