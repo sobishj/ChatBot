@@ -194,9 +194,21 @@ def extract(html: str, url: str, mode: str = "auto") -> Extracted:
         return Extracted(title="", text="")
     title = extract_title(doc)
     links = extract_links(doc, url)
+    description = extract_description(doc)
     _annotate(doc)
     if mode == "main_content":
         text = _main_content_text(lxml_html.tostring(doc, encoding="unicode"), url)
     else:
         text = _structural_text(doc)
+    # The page's own summary: often the only text a JavaScript-built site sends to non-browsers.
+    if description and description.lower() not in text.lower():
+        text = f"{description}\n{text}".strip()
     return Extracted(title=title, text=text[:MAX_TEXT_CHARS], links=links)
+
+
+def extract_description(doc: lxml_html.HtmlElement) -> str:
+    for xpath in ("//meta[@name='description']/@content", "//meta[@property='og:description']/@content"):
+        values = [re.sub(r"\s+", " ", v).strip() for v in doc.xpath(xpath) if v and v.strip()]
+        if values:
+            return values[0][:1000]
+    return ""

@@ -160,3 +160,11 @@ def test_extract_labels_icon_details_and_decodes_protected_emails() -> None:
     assert "Opening hours: 10:00 AM to 10:00 PM" in text
     assert "Shop Timings" in text and "Opening hours: Shop Timings" not in text  # already labelled: left alone
     assert "Phone: +91 4842727776" in text and "Email: info@example.com" in text
+
+
+def test_extract_keeps_the_page_description_for_javascript_built_sites() -> None:
+    html = """<html><head><title>TaxLead</title><meta name="description" content="Business services and consulting in Kochi: GST, income tax and compliance.">
+    </head><body><div id="root"></div><script src="/app.js"></script></body></html>"""
+    assert extract(html, "https://taxlead.test/").text == "Business services and consulting in Kochi: GST, income tax and compliance."
+    page = "<html><head><meta name='description' content='Shoes and more'></head><body><main><p>Shoes and more</p></main></body></html>"
+    assert extract(page, "https://x.test/").text.count("Shoes and more") == 1  # not repeated when already in the text
