@@ -54,7 +54,12 @@ DEFAULT_CRAWL_SETTINGS: dict[str, Any] = {
     "delay_seconds": 1.0,
     "include_patterns": [],  # e.g. ["/stores/*"]; empty = everything
     "exclude_patterns": [],  # e.g. ["/careers/*", "*?print=*"]
+    "render_js": "auto",  # auto | always | never: open JavaScript-built pages in a local headless browser
+    "read_images": True,  # read the text in pictures (OCR, or the AI model when it can see pictures)
+    "read_documents": True,  # read PDF, Word and Excel files linked from the site
 }
+
+RENDER_JS_MODES = ("auto", "always", "never")
 
 DEFAULT_DOCUMENT_SETTINGS: dict[str, Any] = {
     "watch_path": None,  # absolute path under WATCHED_DIR, or None
@@ -234,6 +239,13 @@ def validate_crawl_settings(changes: dict[str, Any]) -> dict[str, Any]:
             if isinstance(items, str):
                 items = items.splitlines()
             clean[key] = [str(p).strip() for p in items if str(p).strip()][:100]
+    if "render_js" in changes:
+        if changes["render_js"] not in RENDER_JS_MODES:
+            raise ClientError("JavaScript rendering must be auto, always or never.")
+        clean["render_js"] = changes["render_js"]
+    for key in ("read_images", "read_documents"):
+        if key in changes:
+            clean[key] = bool(changes[key])
     return clean
 
 

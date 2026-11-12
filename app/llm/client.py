@@ -447,6 +447,31 @@ def test_connection(cfg: ModelConfig) -> LLMResult:
     )
 
 
+# ----------------------------------------------------------------------------- pictures
+IMAGE_PROMPT = "Transcribe all readable text in this image exactly, then describe it in one or two sentences."
+
+
+def supports_vision(cfg: ModelConfig) -> bool:
+    """True when LiteLLM knows the model accepts pictures (unknown models: False)."""
+    import litellm
+
+    try:
+        return bool(litellm.supports_vision(model=_litellm_kwargs(cfg)["model"]))
+    except Exception:  # noqa: BLE001 - unknown model or provider
+        return False
+
+
+def read_image(cfg: ModelConfig, data: bytes, mime: str) -> str:
+    """The text in a picture plus a short description, by a vision model. Raises :class:`LLMError`."""
+    import base64
+
+    content: Any = [
+        {"type": "text", "text": IMAGE_PROMPT},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"}},
+    ]
+    return complete(cfg, [{"role": "user", "content": content}], max_tokens=500).text
+
+
 _MODEL_LIST_TTL = 600  # seconds; model lists rarely change, and the form refetches on every key edit
 _model_list_cache: dict[str, tuple[float, list[str]]] = {}
 _http_client: Any = None

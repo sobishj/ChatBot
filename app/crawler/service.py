@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.crawler import images as picture_text
 from app.crawler.crawler import CrawlConfig, Crawler, FetchedPage
 from app.db.models import Client, Page
 from app.embeddings.model import Embedder
@@ -27,8 +28,13 @@ def crawl_client(
     log: Callable[[str], None] = logger.info,
     should_stop: Callable[[], bool] = lambda: False,
     crawler: Crawler | None = None,
+    image_reader: picture_text.ImageReader | None = None,
 ) -> dict[str, Any]:
-    """Crawl ``client.website_url``; index new/changed pages, skip unchanged, remove vanished ones."""
+    """Crawl ``client.website_url``; index new/changed pages, skip unchanged, remove vanished ones.
+
+    With ``read_images`` on, what the pictures on a page say is added to its text
+    (``image_reader`` defaults to OCR, or the client's AI model when it can see pictures).
+    """
     if not client.website_url:
         raise ValueError("This client has no website URL.")
     settings = crawl_settings(client)
@@ -39,13 +45,25 @@ def crawl_client(
         include_patterns=list(settings["include_patterns"]),
         exclude_patterns=list(settings["exclude_patterns"]),
         extraction=str(settings.get("extraction", "auto")),
+        render_js=str(settings.get("render_js", "auto")),
+        read_documents=settings.get("read_documents", True) is not False,
     )
     crawler = crawler or Crawler(config)
+    read_images = settings.get("read_images", True) is not False
+    budget = picture_text.ImageBudget()
+    reader: picture_text.ImageReader | None = image_reader
     ensure_schema(db, embedder)
     existing: dict[str, Page] = {p.url: p for p in db.scalars(select(Page).where(Page.client_id == client.id))}
     stats = {"new": 0, "updated": 0, "unchanged": 0, "removed": 0, "chunks": 0}
 
     def on_page(fetched: FetchedPage) -> None:
+        nonlocal reader
+        if read_images and fetched.images:
+            if reader is None:
+                reader = picture_text.default_reader(db, client)
+            section = picture_text.describe_images(db, fetched.images, budget, crawler.fetch_image, reader)
+            if section:
+                fetched.text = f"{fetched.text.strip()}\n\n{section}" if fetched.text.strip() else section
         content_hash = sha256(fetched.title + "\n" + fetched.text)
         page = existing.get(fetched.url)
         now = datetime.now(UTC)
@@ -93,8 +111,13 @@ def crawl_client(
         "failed": result.failed,
         "hit_limit": result.hit_limit,
         "used_sitemap": result.used_sitemap,
+        "rendered": result.rendered,
+        "images_read": budget.read,
+        "documents": result.documents,
         "errors": result.errors[:50],
     }
+    if result.rendered or budget.read or result.documents:
+        log(f"Read {result.rendered} pages with JavaScript, {budget.read} new pictures, {result.documents} linked documents")
     log(
         f"Crawl done: {stats['new']} new, {stats['updated']} updated, {stats['unchanged']} unchanged, "
         f"{stats['removed']} removed, {result.failed} failed" + (" (page limit reached)" if result.hit_limit else "")

@@ -19,6 +19,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
 from app.analytics.stats import apply_retention
+from app.crawler.images import cleanup_cache as cleanup_image_cache
 from app.db.models import Client
 from app.db.session import session_scope
 from app.services import jobs as job_service
@@ -82,8 +83,12 @@ def tick() -> None:
             if state.get("last_cleanup") != today:
                 deleted = apply_retention(db, int(values["retention_days"] or 0))
                 removed = rate_limit.cleanup(db)
+                pictures = cleanup_image_cache(db)
                 state["last_cleanup"] = today
-                logger.info("Retention cleanup: %s question(s) deleted, %s rate-limit counters removed", deleted, removed)
+                logger.info(
+                    "Retention cleanup: %s question(s) deleted, %s rate-limit counters removed, %s expired picture texts removed",
+                    deleted, removed, pictures,
+                )
 
             set_setting(db, "scheduler_state", state)
     except Exception:  # noqa: BLE001 - never let the scheduler die

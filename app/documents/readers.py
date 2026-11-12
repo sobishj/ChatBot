@@ -40,6 +40,14 @@ class ReadCancelled(Exception):
     """The job was cancelled while a long document was being read."""
 
 
+_PAGE_MARKER_RE = re.compile(r"\[Page \d+\]")
+
+
+def has_text(text: str) -> bool:
+    """False for "[Page 1] [Page 2] …" alone: a PDF whose pages are pictures (scanned) has no text."""
+    return bool(_PAGE_MARKER_RE.sub("", text).strip())
+
+
 def is_supported(path: Path | str) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_EXTENSIONS
 
@@ -235,7 +243,7 @@ def read_document(path: Path, progress: Progress | None = None, should_stop: Cal
         raise UnsupportedDocument(f"Could not read the file ({exc.__class__.__name__}). Is it corrupt?") from exc
     # Table-of-contents leaders ("Overview ........ 3") drown out the real words of a chunk in search.
     text = _LEADER_RE.sub(" … ", text).strip()
-    if not text:
+    if not has_text(text):
         hint = ""
         if path.suffix.lower() == ".pdf":
             hint = (

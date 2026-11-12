@@ -41,6 +41,13 @@ COPY requirements.txt requirements-dev.txt ./
 RUN pip install -r requirements.txt \
     && if [ "$INSTALL_DEV" = "true" ]; then pip install -r requirements-dev.txt; fi
 
+# Headless Chromium (Playwright) for JavaScript-built websites, with its system libraries.
+# Installed outside the home folder so the unprivileged user below can run it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
+
 # Run as an unprivileged user. /data is a volume (uploads, logos, model cache);
 # creating it here gives a fresh named volume the right owner.
 RUN useradd --create-home --uid 1000 appuser \

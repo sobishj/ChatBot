@@ -180,6 +180,9 @@ class CrawlSettingsIn(BaseModel):
     include_patterns: list[str] | str | None = None
     exclude_patterns: list[str] | str | None = None
     extraction: str | None = None
+    render_js: str | None = None
+    read_images: bool | None = None
+    read_documents: bool | None = None
 
 
 @router.put("/{client_id}/crawl-settings")

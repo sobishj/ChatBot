@@ -34,6 +34,9 @@ defusedxml==0.7.1
 pypdfium2==5.13.0
 python-docx==1.1.2
 openpyxl==3.1.5
+pillow==12.3.0
+# Headless Chromium for JavaScript-built pages (the browser itself is installed in the Dockerfile).
+playwright==1.64.0
 
 # Misc
 apscheduler==3.11.0

@@ -72,7 +72,7 @@ def live_db() -> None:
 
 ALL_TABLES = (
     "rate_limits, jobs, action_calls, action_sessions, client_actions, questions, chunks, documents, pages, "
-    "user_clients, clients, ai_models, users, settings"
+    "user_clients, clients, ai_models, users, settings, image_text_cache"
 )
 
 
@@ -128,3 +128,14 @@ def ai_model(db: Session):
     model = save_model(db, {"name": "Main", "provider": "openai_compatible", "base_url": "http://llm.test/v1", "model_name": "main-model"})
     db.commit()
     return model
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never start a real browser (the Docker image has Chromium): JavaScript rendering is mocked."""
+    from app.crawler import render
+
+    def unavailable():
+        raise render.BrowserUnavailable("no browser in tests")
+
+    monkeypatch.setattr(render, "_sync_playwright", unavailable)

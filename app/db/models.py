@@ -330,3 +330,18 @@ class RateLimitCounter(Base):
     key: Mapped[str] = mapped_column(String(200), primary_key=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+# --------------------------------------------------------------------------- crawler picture cache
+class ImageTextCache(Base):
+    """What a picture on a crawled page says, by URL, so re-crawls don't read it again.
+
+    ``text`` is "" for pictures that couldn't be read (cached too, so they aren't retried every
+    crawl). Rows older than ``app.crawler.images.CACHE_DAYS`` are ignored and deleted daily.
+    """
+
+    __tablename__ = "image_text_cache"
+
+    url_hash: Mapped[str] = mapped_column(Text, primary_key=True)  # sha256(url), hex
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _now_column()

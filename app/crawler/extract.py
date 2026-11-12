@@ -18,16 +18,30 @@ from urllib.parse import urljoin
 from lxml import etree
 from lxml import html as lxml_html
 
-# Elements that never contain page content.
-_DROP_XPATH = (
-    "//script|//style|//noscript|//template|//svg|//iframe|//form|//button|//select|//textarea"
-    "|//header|//nav|//footer|//aside"
-    "|//*[@role='navigation' or @role='banner' or @role='contentinfo' or @role='dialog' or @aria-hidden='true']"
+
+def _drop_xpath(keep_chrome: bool = False) -> str:
+    """Elements that never contain page content.
+
+    The site-wide header and footer repeat on every page and are usually dropped, but
+    ``keep_chrome`` keeps them (the start page: they often hold the only phone number, email
+    and address of the site). Navigation and popups are dropped either way.
+    """
+    chrome = "" if keep_chrome else "|//header|//footer"
+    roles = "@role='navigation' or @role='dialog' or @aria-hidden='true'"
+    if not keep_chrome:
+        roles += " or @role='banner' or @role='contentinfo'"
     # Page builders (Elementor, Divi, ...) mark their global header/footer templates.
-    "|//*[@data-elementor-type='header' or @data-elementor-type='footer' or @data-elementor-type='popup']"
-    "|//*[contains(concat(' ', normalize-space(@class), ' '), ' screen-reader-text ')]"
-    "|//*[contains(@class, 'cookie') or contains(@id, 'cookie')]"
-)
+    elementor = "@data-elementor-type='popup'"
+    if not keep_chrome:
+        elementor = "@data-elementor-type='header' or @data-elementor-type='footer' or " + elementor
+    return (
+        "//script|//style|//noscript|//template|//svg|//iframe|//form|//button|//select|//textarea"
+        f"|//nav|//aside{chrome}"
+        f"|//*[{roles}]"
+        f"|//*[{elementor}]"
+        "|//*[contains(concat(' ', normalize-space(@class), ' '), ' screen-reader-text ')]"
+        "|//*[contains(@class, 'cookie') or contains(@id, 'cookie')]"
+    )
 
 _BLOCK_TAGS = {
     "p", "div", "section", "article", "main", "li", "ul", "ol", "dl", "dt", "dd", "table", "tr", "td", "th",
@@ -130,10 +144,20 @@ MAX_TEXT_CHARS = 200_000
 
 
 @dataclass
+class PageImage:
+    url: str
+    alt: str = ""
+
+
+@dataclass
 class Extracted:
     title: str
     text: str
     links: list[str] = field(default_factory=list)
+    # Pictures in the page's content (absolute URLs, de-duplicated), with their alt text.
+    images: list[PageImage] = field(default_factory=list)
+    # Length of the page's own text, without the meta description: near 0 for JavaScript-built pages.
+    body_chars: int = 0
 
 
 def parse(html: str) -> lxml_html.HtmlElement | None:
@@ -162,8 +186,43 @@ def extract_links(doc: lxml_html.HtmlElement, base_url: str) -> list[str]:
     return links
 
 
-def _structural_text(doc: lxml_html.HtmlElement) -> str:
-    for el in doc.xpath(_DROP_XPATH):
+def _image_src(img: lxml_html.HtmlElement) -> str:
+    """An <img>'s picture: src, else a lazy-loading attribute, else the last (largest) srcset entry."""
+    for name in ("src", "data-src", "data-lazy-src", "data-original"):
+        value = (img.get(name) or "").strip()
+        if value and not value.startswith("data:"):
+            return value
+    for name in ("srcset", "data-srcset"):
+        entries = [e.strip().split()[0] for e in (img.get(name) or "").split(",") if e.strip()]
+        entries = [e for e in entries if not e.startswith("data:")]
+        if entries:
+            return entries[-1]
+    return ""
+
+
+def extract_images(doc: lxml_html.HtmlElement, base_url: str, keep_chrome: bool = False) -> list[PageImage]:
+    """Content pictures (not inside dropped elements such as navigation), absolute and de-duplicated."""
+    base = doc.xpath("//base/@href")
+    base_url = urljoin(base_url, base[0]) if base else base_url
+    dropped = set(doc.xpath(_drop_xpath(keep_chrome)))
+    images: list[PageImage] = []
+    seen: set[str] = set()
+    for img in doc.iter("img"):
+        if img in dropped or any(a in dropped for a in img.iterancestors()):
+            continue
+        src = _image_src(img)
+        if not src:
+            continue
+        url = urljoin(base_url, src)
+        if not url.lower().startswith(("http://", "https://")) or url in seen:
+            continue
+        seen.add(url)
+        images.append(PageImage(url=url, alt=re.sub(r"\s+", " ", img.get("alt") or "").strip()))
+    return images
+
+
+def _structural_text(doc: lxml_html.HtmlElement, keep_chrome: bool = False) -> str:
+    for el in doc.xpath(_drop_xpath(keep_chrome)):
         if el.getparent() is not None:
             el.drop_tree()
     body = doc.find("body")
@@ -187,23 +246,28 @@ def _main_content_text(html: str, url: str) -> str:
     return trafilatura.extract(html, url=url, include_tables=True, include_comments=False, favor_recall=True) or ""
 
 
-def extract(html: str, url: str, mode: str = "auto") -> Extracted:
-    """Extract title, text and outgoing links from an HTML page."""
+def extract(html: str, url: str, mode: str = "auto", keep_chrome: bool = False) -> Extracted:
+    """Extract title, text, outgoing links and content pictures from an HTML page.
+
+    ``keep_chrome`` keeps the site header and footer (the crawl uses it for the start page).
+    """
     doc = parse(html)
     if doc is None:
         return Extracted(title="", text="")
     title = extract_title(doc)
     links = extract_links(doc, url)
     description = extract_description(doc)
+    images = extract_images(doc, url, keep_chrome)
     _annotate(doc)
     if mode == "main_content":
         text = _main_content_text(lxml_html.tostring(doc, encoding="unicode"), url)
     else:
-        text = _structural_text(doc)
+        text = _structural_text(doc, keep_chrome)
+    body_chars = len(text.strip())
     # The page's own summary: often the only text a JavaScript-built site sends to non-browsers.
     if description and description.lower() not in text.lower():
         text = f"{description}\n{text}".strip()
-    return Extracted(title=title, text=text[:MAX_TEXT_CHARS], links=links)
+    return Extracted(title=title, text=text[:MAX_TEXT_CHARS], links=links, images=images, body_chars=body_chars)
 
 
 def extract_description(doc: lxml_html.HtmlElement) -> str:
