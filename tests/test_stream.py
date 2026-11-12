@@ -81,3 +81,11 @@ def test_public_stream_endpoint(db: Session, mall, monkeypatch: pytest.MonkeyPat
     assert events[-1]["t"] == "done" and events[-1]["answer"] == "We are open until 11 PM." and events[-1]["sources"] == []
     assert api.post("/api/chat/stream", headers={"Origin": "https://evil.test"}, json={"client_id": "mall", "session_id": "public-stream-2", "message": "x"}).status_code == 403
     assert api.options("/api/chat/stream", headers={"Origin": ORIGIN}).status_code == 204
+
+
+def test_streamed_no_answer_ends_with_the_contact_details(db: Session, mall) -> None:
+    mall.branding = {**(mall.branding or {}), "contact_details": "Email: help@mall.test"}
+    db.commit()
+    events = list(stream_answer(mall.id, "stream-contact-1", "Helicopters?", stream_llm=fake_stream(["I don't know. ", "[[NO_ANSWER]]"])))
+    assert events[-1][0] == "done"
+    assert events[-1][1].answer == "I don't know.\n\nYou can contact us here:\nEmail: help@mall.test"

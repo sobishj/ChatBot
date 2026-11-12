@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.chat.essentials import key_information, page_directory
+from app.chat.contact import with_contact
 from app.chat.language import detect_language
 from app.chat.pii import mask_pii
 from app.chat.prompt import build_messages, parse_answer
@@ -182,6 +183,7 @@ class PreparedAnswer:
             self.settings["system_prompt"], b["bot_name"], self.client.name, result.hits, history, self.question,
             key_information(db, self.client.id, doc_settings.get("key_facts") or ""), local_now(b["timezone"], self.settings["timezone"]),
             page_directory(db, self.client.id) if is_list_question(self.question) else "",
+            b.get("contact_details") or "",
         )
         chain = resolve_chain(db, self.client)
         if not chain:
@@ -194,6 +196,8 @@ class PreparedAnswer:
         response = self.response
         answer, flagged_no_answer = parse_answer(llm_result.text)
         response.answer = answer or UNAVAILABLE_ANSWER
+        if not answer or flagged_no_answer:  # the model couldn't answer: make sure the visitor gets the contact details
+            response.answer = with_contact(response.answer, branding(self.client).get("contact_details"), self.language)
         response.answered = (
             bool(answer) and not flagged_no_answer and bool(response.hits)
             and response.confidence >= float(self.settings["confidence_threshold"])
@@ -208,7 +212,7 @@ class PreparedAnswer:
 
     def fail(self, exc: Exception) -> None:
         logger.warning("Chat failed for client %s: %s", self.client.client_id, exc)
-        self.response.answer = UNAVAILABLE_ANSWER
+        self.response.answer = with_contact(UNAVAILABLE_ANSWER, branding(self.client).get("contact_details"), self.language)
         self.response.error = str(exc)[:1000]
         self.model_id = None
 

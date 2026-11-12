@@ -184,3 +184,28 @@ def test_page_directory_lists_names_without_the_site_suffix(db: Session, embedde
         db.add(Page(client_id=client.id, title=f"{name} - Mall Y", url=f"https://y.test/{name}", content="x", content_hash=name))
     db.commit()
     assert page_directory(db, client.id) == "About Us, BATA, NIKE, SKECHERS"
+
+
+def _set_contact(db: Session, client, contact: str) -> None:
+    client.branding = {**(client.branding or {}), "contact_details": contact}
+    db.commit()
+
+
+def test_unanswered_questions_get_the_contact_details(db: Session, embedder, mall, ai_model) -> None:
+    _set_contact(db, mall, "Phone: +91 98765 43210")
+    r = answer_question(db, mall, "session-contact-1", "Do you sell helicopters?", llm=FakeLLM(reply=f"Sorry, I don't know. {NO_ANSWER_TAG}"))
+    assert not r.answered and r.answer.endswith("You can contact us here:\nPhone: +91 98765 43210")
+
+    # Already given by the model: not repeated.
+    r = answer_question(db, mall, "session-contact-2", "Helicopters?", llm=FakeLLM(reply=f"Sorry, please call 98765 43210. {NO_ANSWER_TAG}"))
+    assert r.answer.count("43210") == 1
+
+    # Model failed: the apology carries the details.
+    r = answer_question(db, mall, "session-contact-3", "Where is ASICS?", llm=FakeLLM(fail_models={"main-model"}))
+    assert r.error and "Phone: +91 98765 43210" in r.answer
+
+    # Only unanswered because of low search confidence: the model's answer is left alone.
+    set_setting(db, "confidence_threshold", 0.99)
+    db.commit()
+    r = answer_question(db, mall, "session-contact-4", "Where is ASICS?", llm=FakeLLM(reply="Second floor"))
+    assert not r.answered and r.answer == "Second floor"

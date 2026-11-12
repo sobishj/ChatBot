@@ -33,6 +33,7 @@ from app.actions.pending import (
 )
 from app.actions.schema import tools_for
 from app.chat.essentials import key_information, page_directory
+from app.chat.contact import with_contact
 from app.chat.language import detect_language
 from app.chat.pii import tokenize_pii
 from app.chat.prompt import build_messages, parse_answer
@@ -239,6 +240,7 @@ def answer_with_actions(
             settings["system_prompt"], b["bot_name"], client.name, hits, history, question,
             key_information(db, client.id, doc_settings.get("key_facts") or ""), local_now(b["timezone"], settings["timezone"]),
             page_directory(db, client.id) if is_list_question(question) else "",
+            b.get("contact_details") or "",
         )
         plain_messages = [dict(m) for m in messages]
         messages[0]["content"] += "\n\n" + ACTIONS_PROMPT.format(client_name=client.name, today=date.today().strftime("%A, %d %B %Y"))
@@ -259,11 +261,12 @@ def answer_with_actions(
         from_content = bool(hits) and confidence >= float(settings["confidence_threshold"])
         from_actions = any(r.ok for r in run.results)
         answered = bool(answer) and not flagged and (from_content or from_actions)
-        return finish(answer or UNAVAILABLE_ANSWER, answered, sources_from_hits(hits) if answered and from_content else [])
+        reply = with_contact(answer or UNAVAILABLE_ANSWER, b.get("contact_details"), language) if not answer or flagged else answer
+        return finish(reply, answered, sources_from_hits(hits) if answered and from_content else [])
     except (LLMError, EmbeddingNotReady) as exc:
         logger.warning("Chat failed for client %s: %s", client.client_id, exc)
         db.rollback()
-        return finish(UNAVAILABLE_ANSWER, False, [], str(exc)[:1000])
+        return finish(with_contact(UNAVAILABLE_ANSWER, b.get("contact_details"), language), False, [], str(exc)[:1000])
 
 
 def _plain(llm: Callable[..., LLMResult], chain: list[ModelConfig], messages: list[dict[str, Any]]) -> tuple[LLMResult, bool]:

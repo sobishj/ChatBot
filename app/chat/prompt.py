@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
+from app.chat.contact import contact_rule
 from app.search.hybrid import SearchHit
 
 NO_ANSWER_TAG = "[[NO_ANSWER]]"
@@ -105,12 +106,14 @@ def build_messages(
     key_facts: str = "",
     now: datetime | None = None,
     directory: str = "",
+    contact: str = "",
 ) -> list[dict[str, str]]:
     """``history`` is a list of (question, answer) pairs, oldest first."""
     context = format_context(hits, key_facts, client_name, directory)
     system = render_system_prompt(template, bot_name, client_name, context, now.date() if now else None)
     rules = [SUBJECT_RULE, DETAILS_RULE, DOCUMENTS_RULE] + ([LIST_RULE] if directory else [])
     system += "\n\n" + "\n\n".join(rule.format(client_name=client_name) for rule in rules)
+    system += "\n\n" + contact_rule(contact)
     if now is not None:  # lets the assistant answer "is it open now?"
         system += (
             f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y')}, {format_time_12(now.hour, now.minute)}"

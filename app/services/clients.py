@@ -35,6 +35,8 @@ DEFAULT_BRANDING: dict[str, Any] = {
     "mobile_height_pct": 80,
     # IANA time zone for "what time is it / are you open now?" answers; "" = the global setting.
     "timezone": "",
+    # Phone, email, WhatsApp … given to visitors when the assistant can't answer (up to 500 characters).
+    "contact_details": "",
 }
 
 SIZE_KEYS = ("width_pct", "height_pct", "mobile_width_pct", "mobile_height_pct")
