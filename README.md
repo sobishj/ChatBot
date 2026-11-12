@@ -176,12 +176,34 @@ The client detail page has these tabs:
 | Website | **Crawl now** with live progress, crawl settings, crawled pages (view the exact text learned, remove a page) |
 | Documents | Drag-and-drop upload, Use checkboxes, key information, re-index |
 | AI model | Which saved model answers this client (default = system default) |
-| Branding | Colour, logo, bot name, greeting, language, position, "Powered by", **live preview** |
+| Branding | Colour, logo, bot name, greeting, language, position, chat window size, time zone, contact details, "Powered by", **live preview** (desktop / phone) |
 | Allowed domains | Websites allowed to use this bot (super admin only) |
 | Test chat | Chat as a visitor, with confidence score, model used, response time and the retrieved passages |
 | Embed code | The one-line script with a Copy button, plus guides for WordPress, Wix, Shopify, Squarespace, GTM and custom HTML |
 | Stats | Questions over 7/30/90 days, top 20 questions, unanswered questions, per-day chart, languages, tokens and cost |
 | Conversations | Searchable question/answer log (personal data masked), CSV export |
+
+**Branding settings** (besides colour, logo, names and greeting):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `width_pct`, `height_pct` | 25, 70 | Chat window size on desktops, in % of the screen (at least 300 × 360 pixels) |
+| `mobile_width_pct`, `mobile_height_pct` | 92, 80 | Chat window size on phones (screens up to 480 pixels wide), centred at the bottom; 100 × 100 is full screen |
+| `timezone` | empty | IANA time zone (e.g. `Asia/Kolkata`) for "what time is it?" / "are you open now?" answers; empty uses the global zone (Settings → Crawl schedule), then UTC. Not sent to the widget |
+| `contact_details` | empty | Phone, email, WhatsApp… (up to 500 characters) given to visitors when the assistant can't answer |
+
+Sizes are whole numbers from 20 to 100. The live preview has a **Desktop / Phone** toggle and
+draws the widget on a scaled stand-in screen (1280 × 800 or 390 × 844).
+
+**Contact details for unanswered questions.** When the assistant can't answer (the model says it
+has no information, returns nothing, or the AI model fails), the reply ends with the client's
+contact details in the visitor's language, e.g. "You can contact us here:". They aren't repeated
+when the model already gave them (phone numbers are compared by their last 8 digits, so a dropped
++91 doesn't matter). Answers that are only marked unanswered because of a low search score are
+left as they are. Without configured details, the assistant gives contact details found on the
+website and never invents any.
+
+Times in answers use the 12-hour clock with AM/PM (e.g. 9:30 AM, 7 PM).
 
 **Chatbot on/off.** The switch at the top of a client's **Overview** tab turns the chatbot on the
 website on or off. While it is off, the chat bubble doesn't appear and the public chat API
@@ -201,6 +223,9 @@ refuses messages; **Test chat** keeps working, and nothing else changes (content
     keeps everything else, including small facts such as "Located on: Second Floor" or
     opening hours.
   - *Main article only* (trafilatura) suits blogs and news sites.
+- The **start page keeps its site header and footer**, where the phone number, email and
+  address often are (menus and popups are still left out). Other pages leave them out, as they
+  repeat on every page.
 - Unchanged pages (same content hash) are skipped. Changed pages are re-indexed. Pages that
   disappeared (404/410, or no longer found after a complete crawl) are removed along with
   their passages.
@@ -209,6 +234,31 @@ refuses messages; **Test chat** keeps working, and nothing else changes (content
 
 Automatic re-crawls run daily or weekly at a time you choose (Settings → Crawl schedule).
 They re-crawl every active client and re-check their documents.
+
+### Reading everything: JavaScript sites, pictures and linked documents
+
+Three crawl settings (Website tab → Crawl settings), all on by default:
+
+| Setting | Values | What it does |
+|---|---|---|
+| **JavaScript websites** (`render_js`) | `auto` (default), `always`, `never` | Sites built with React, Vue, Angular… send almost no text until their scripts run. With `auto`, a page whose own text is under 300 characters, or that is an empty app shell (`<div id="root"></div>`), is opened in a **headless Chromium on this server** (Playwright) and read as visitors see it. `always` opens every page in the browser (slower); `never` reads the plain HTML only. |
+| **Read pictures** (`read_images`) | on / off | The text in pictures (phone numbers on banners, price lists, opening hours on posters) is read with **Tesseract OCR** (`OCR_LANGS`). When the client's AI model can see pictures, the model transcribes and briefly describes them instead, with OCR as the fallback. It is added to the page as *Pictures on this page*. |
+| **Read linked documents** (`read_documents`) | on / off | PDF, Word and Excel files linked from the site (same site, up to 20 MB) are read with the same readers as uploaded documents (OCR for scanned PDFs) and indexed like pages, with the file's URL as the source and its name as the title. They are found from page links even when the crawl follows a sitemap. |
+
+- One browser serves the whole crawl, with a new tab per page; it is closed when the crawl ends.
+  Each page gets up to 25 seconds to load and is scrolled to the end, so content that loads on
+  scroll is included. The browser result is used only when it has more text than the plain HTML.
+- If Chromium isn't available (for example when running outside the Docker image without
+  `playwright install chromium`), the crawl log says so once and pages are read without JavaScript.
+  The crawl never fails because of it.
+- Pictures: icons, logos, SVG and GIF files are skipped, and so are JPEG/PNG/WebP files under 3 KB
+  or over 8 MB. A crawl reads at most 10 pictures per page, at most 150 new pictures in total, and
+  stops reading new ones on a page after 60 seconds. What each picture says is cached in PostgreSQL
+  (`image_text_cache`) for 60 days, so re-crawls don't read it again. Expired entries are
+  removed by the daily cleanup.
+- A linked file with no text (for example a scanned PDF where OCR finds nothing) is skipped with the error *no text found*.
+- When anything was read this way, the crawl log ends with e.g. *Read 12 pages with JavaScript,
+  30 new pictures, 4 linked documents*.
 
 ## 6. Documents
 
@@ -233,7 +283,9 @@ and never from unticked ones. Unticked documents stay indexed, so ticking them a
 Useful for drafts, outdated versions, internal files, or documents you don't want answered from.
 
 **Key information** (Documents → Answering) is always given to the assistant, whatever search
-finds: put the business's opening hours, address and contact details there.
+finds: put the business's opening hours, address and contact details there. Each entry is a
+record that can be edited or deleted; new information is added as a new record. They're stored
+together as one text (records separated by a blank line), up to 4,000 characters.
 
 ## 7. AI models
 
@@ -381,8 +433,10 @@ Copy the line from client → **Embed code**:
 - It renders in a Shadow DOM, so the host page's CSS can't break it and it can't restyle the
   page.
 - It shows a floating bubble that opens a chat window, with a typing indicator. It is
-  keyboard accessible (Enter sends, Escape closes) and full-screen on phones.
-- Branding (colour, logo, greeting, position, language, "Powered by") is loaded from
+  keyboard accessible (Enter sends, Escape closes). On phones the window is centred at the
+  bottom with rounded corners (full screen when the phone size is set to 100% × 100%), and
+  the bubble is hidden while it is open.
+- Branding (colour, logo, greeting, position, language, window size, "Powered by") is loaded from
   `/api/client/<id>/config`. That response contains branding only, no secrets.
 - Visitors see only the answer, not where it came from (pages and documents stay private). The notice "Chats are
   recorded to improve service" is shown and editable in Settings → Privacy.
@@ -540,7 +594,7 @@ the UI.
 |---|---|
 | Widget doesn't appear | Browser console shows `[Website Assistant] not loaded: config 403`: add the site's domain under **Allowed domains**. HTTPS sites need the widget served over HTTPS. |
 | "Could not connect" when testing a local model | Use `host.docker.internal`, not `localhost`, and make sure the model server listens on a reachable interface. |
-| Crawl finds few pages | Check robots.txt, the include/exclude patterns and the page limit. Sites that render their content with JavaScript only aren't supported yet. |
+| Crawl finds few pages | Check robots.txt, the include/exclude patterns and the page limit. For JavaScript-built sites, keep **JavaScript websites** on `auto` or `always` and check the crawl log for "read without running their scripts" (Chromium missing). |
 | Answers marked unanswered although correct | Lower **Settings → Answers → confidence threshold**. Test chat shows each answer's score. |
 | Worker "Problem" on System health | `docker compose logs worker` |
 | Forgot admin password | `docker compose exec app python cli.py reset-admin-password you@example.com` |
