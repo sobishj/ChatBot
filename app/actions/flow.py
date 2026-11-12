@@ -237,7 +237,7 @@ def answer_with_actions(
         doc_settings = document_settings(client)
         messages: list[dict[str, Any]] = build_messages(
             settings["system_prompt"], b["bot_name"], client.name, hits, history, question,
-            key_information(db, client.id, doc_settings.get("key_facts") or ""), local_now(settings["timezone"]),
+            key_information(db, client.id, doc_settings.get("key_facts") or ""), local_now(b["timezone"], settings["timezone"]),
             page_directory(db, client.id) if is_list_question(question) else "",
         )
         plain_messages = [dict(m) for m in messages]

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,9 +33,19 @@ DEFAULT_BRANDING: dict[str, Any] = {
     "height_pct": 70,
     "mobile_width_pct": 92,
     "mobile_height_pct": 80,
+    # IANA time zone for "what time is it / are you open now?" answers; "" = the global setting.
+    "timezone": "",
 }
 
 SIZE_KEYS = ("width_pct", "height_pct", "mobile_width_pct", "mobile_height_pct")
+
+
+def is_time_zone(value: str) -> bool:
+    try:
+        ZoneInfo(value)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
 
 DEFAULT_CRAWL_SETTINGS: dict[str, Any] = {
     "max_pages": 500,
@@ -197,6 +208,10 @@ def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
             if not 20 <= n <= 100:
                 raise ClientError("Chat window sizes must be between 20% and 100%.")
             value = n
+        elif key == "timezone":
+            value = str(value or "").strip()
+            if value and not is_time_zone(value):
+                raise ClientError("Unknown time zone. Use a name like Asia/Kolkata or UTC.")
         elif key == "powered_by_url":
             value = normalize_url(value) if value else ""
         else:

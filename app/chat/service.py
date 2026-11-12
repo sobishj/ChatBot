@@ -60,14 +60,20 @@ class ChatResponse:
     actions_used: list[str] = field(default_factory=list)
 
 
-def local_now(timezone: str | None) -> datetime:
-    """Current time in the configured time zone (Settings), for questions like "is it open now?"."""
+def local_now(client_timezone: str | None, global_timezone: str | None = None) -> datetime:
+    """Current time for questions like "is it open now?".
+
+    The client's own time zone (Branding), else the global one (Settings), else UTC.
+    """
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-    try:
-        return datetime.now(ZoneInfo(timezone or "UTC"))
-    except (ZoneInfoNotFoundError, ValueError):
-        return datetime.now(UTC)
+    for zone in (client_timezone, global_timezone):
+        if zone:
+            try:
+                return datetime.now(ZoneInfo(zone))
+            except (ZoneInfoNotFoundError, ValueError):
+                continue
+    return datetime.now(UTC)
 
 
 def normalize_question(text: str) -> str:
@@ -174,7 +180,7 @@ class PreparedAnswer:
         doc_settings = document_settings(self.client)
         messages = build_messages(
             self.settings["system_prompt"], b["bot_name"], self.client.name, result.hits, history, self.question,
-            key_information(db, self.client.id, doc_settings.get("key_facts") or ""), local_now(self.settings["timezone"]),
+            key_information(db, self.client.id, doc_settings.get("key_facts") or ""), local_now(b["timezone"], self.settings["timezone"]),
             page_directory(db, self.client.id) if is_list_question(self.question) else "",
         )
         chain = resolve_chain(db, self.client)

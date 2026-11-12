@@ -1,5 +1,5 @@
 // Branding with a live preview rendered by the real widget.js (preview mode).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Branding } from "../../api";
 import { Button, Card, Field, useAction } from "../../components/ui";
 import type { TabProps } from "./ClientDetail";
@@ -20,6 +20,14 @@ const SCREENS: Record<Device, { w: number; h: number; label: string }> = {
   mobile: { w: 390, h: 844, label: "a 390 × 844 phone" },
 };
 const MAX_PREVIEW_HEIGHT = 640;
+
+function timeZones(): string[] {
+  try {
+    return (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf("timeZone");
+  } catch {
+    return ["UTC", "Asia/Kolkata", "Asia/Dubai", "Europe/London", "America/New_York"];
+  }
+}
 
 function SizeSlider({ id, label, value, onChange }: { id: string; label: string; value: number; onChange: (v: number) => void }) {
   return (
@@ -49,9 +57,11 @@ function loadWidgetScript(): Promise<void> {
 export function BrandingTab({ client, reload }: TabProps) {
   const [b, setB] = useState<Branding>(client.branding);
   const [notice, setNotice] = useState("");
+  const [globalTz, setGlobalTz] = useState("UTC");
   const [device, setDevice] = useState<Device>("desktop");
   const [frameWidth, setFrameWidth] = useState(420);
   const measure = useRef<HTMLDivElement>(null);
+  const zones = useMemo(timeZones, []);
   const { busy, run } = useAction();
   const stage = useRef<HTMLDivElement>(null);
   const handle = useRef<WidgetHandle | null>(null);
@@ -59,7 +69,9 @@ export function BrandingTab({ client, reload }: TabProps) {
   const set = <K extends keyof Branding>(k: K, v: Branding[K]) => setB({ ...b, [k]: v });
 
   useEffect(() => {
-    api<{ chat_notice?: string }>("/api/admin/settings").then((s) => setNotice(s.chat_notice ?? "")).catch(() => setNotice("Chats are recorded to improve service."));
+    api<{ chat_notice?: string; timezone?: string }>("/api/admin/settings")
+      .then((s) => { setNotice(s.chat_notice ?? ""); setGlobalTz(s.timezone || "UTC"); })
+      .catch(() => setNotice("Chats are recorded to improve service."));
   }, []);
 
   useEffect(() => {
@@ -141,6 +153,13 @@ export function BrandingTab({ client, reload }: TabProps) {
           <SizeSlider id="b-mw" label="Phone width" value={b.mobile_width_pct} onChange={(v) => set("mobile_width_pct", v)} />
           <SizeSlider id="b-mh" label="Phone height" value={b.mobile_height_pct} onChange={(v) => set("mobile_height_pct", v)} />
           <span className="hint full">On phones (screens up to 480 pixels wide) the window is centred at the bottom. Set both to 100% for full screen.</span>
+          <Field label="Time zone" htmlFor="b-tz" full hint="Used when visitors ask things like “what time is it?” or “are you open now?”.">
+            <select id="b-tz" className="select" value={b.timezone} onChange={(e) => set("timezone", e.target.value)}>
+              <option value="">Same as the global setting ({globalTz})</option>
+              {b.timezone && !zones.includes(b.timezone) && <option value={b.timezone}>{b.timezone}</option>}
+              {zones.map((z) => <option key={z} value={z}>{z.replace(/_/g, " ")}</option>)}
+            </select>
+          </Field>
           <div className="field full">
             <span className="label">Logo</span>
             <div className="row">
