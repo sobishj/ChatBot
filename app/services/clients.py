@@ -27,7 +27,14 @@ DEFAULT_BRANDING: dict[str, Any] = {
     "powered_by_text": "Powered by Website Assistant",
     "powered_by_url": "",
     "logo_file": None,  # filename inside the client's branding folder
+    # Chat window size in percent of the screen (20-100). Phones: 100 x 100 is full screen.
+    "width_pct": 25,
+    "height_pct": 70,
+    "mobile_width_pct": 92,
+    "mobile_height_pct": 80,
 }
+
+SIZE_KEYS = ("width_pct", "height_pct", "mobile_width_pct", "mobile_height_pct")
 
 DEFAULT_CRAWL_SETTINGS: dict[str, Any] = {
     "max_pages": 500,
@@ -182,6 +189,14 @@ def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
                 raise ClientError("Position must be left or right.")
         elif key in ("powered_by", "widget_enabled"):
             value = bool(value)
+        elif key in SIZE_KEYS:
+            try:
+                n = round(float(value))
+            except (TypeError, ValueError, OverflowError):
+                n = 0
+            if not 20 <= n <= 100:
+                raise ClientError("Chat window sizes must be between 20% and 100%.")
+            value = n
         elif key == "powered_by_url":
             value = normalize_url(value) if value else ""
         else:
@@ -266,6 +281,10 @@ def public_config(client: Client, chat_notice: str, logo_url: str | None) -> dic
         "greeting": b["greeting"],
         "default_language": b["default_language"],
         "position": b["position"],
+        "width_pct": b["width_pct"],
+        "height_pct": b["height_pct"],
+        "mobile_width_pct": b["mobile_width_pct"],
+        "mobile_height_pct": b["mobile_height_pct"],
         "logo_url": logo_url,
         "notice": chat_notice,
         "powered_by": b["powered_by"],

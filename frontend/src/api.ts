@@ -143,6 +143,10 @@ export interface Branding {
   powered_by_text: string;
   powered_by_url: string;
   logo_file: string | null;
+  width_pct: number;
+  height_pct: number;
+  mobile_width_pct: number;
+  mobile_height_pct: number;
 }
 
 export interface Client {
