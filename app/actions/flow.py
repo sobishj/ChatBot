@@ -32,8 +32,8 @@ from app.actions.pending import (
     set_pending,
 )
 from app.actions.schema import tools_for
-from app.chat.essentials import key_information, page_directory
 from app.chat.contact import with_contact
+from app.chat.essentials import key_information, page_directory
 from app.chat.language import detect_language
 from app.chat.pii import tokenize_pii
 from app.chat.prompt import build_messages, parse_answer
