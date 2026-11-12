@@ -9,7 +9,7 @@ import pytest
 
 from app.chat.language import detect_language
 from app.chat.pii import mask_pii
-from app.chat.prompt import NO_ANSWER_TAG, build_messages, parse_answer, render_system_prompt
+from app.chat.prompt import NO_ANSWER_TAG, build_messages, format_time_12, parse_answer, render_system_prompt
 from app.chat.service import normalize_question
 from app.indexer.chunker import chunk_text
 from app.llm.providers import PROVIDERS, is_loopback_url
@@ -427,7 +427,11 @@ def test_key_facts_subject_rule_and_current_time_in_prompt() -> None:
     system = build_messages("{context}", "Bot", "Lulu Mall", shop, [], "is it open now?", key_facts="Open daily 9 AM to 11 PM.", now=now)[0]["content"]
     assert system.index("[0] Key information about Lulu Mall") < system.index("[1] Pizza Hut")  # key facts come first
     assert "SUBJECT RULE" in system and "Lulu Mall's own opening hours" in system
-    assert "Current local time: Saturday, 10 October 2026, 14:05 (IST)" in system
+    assert "Current local time: Saturday, 10 October 2026, 2:05 PM (IST)" in system
+    assert "12-hour format" in system
+    assert format_time_12(0, 5) == "12:05 AM"
+    assert format_time_12(12, 0) == "12:00 PM"
+    assert format_time_12(23, 59) == "11:59 PM"
     assert "Key information" in build_messages("{context}", "Bot", "Acme", [], [], "hi", key_facts="Open 9-5")[0]["content"]  # even with no hits
     assert "Key information" not in build_messages("{context}", "Bot", "Acme", shop, [], "hi")[0]["content"]
 

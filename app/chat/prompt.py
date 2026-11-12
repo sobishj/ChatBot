@@ -90,6 +90,11 @@ SUBJECT_RULE = (
 )
 
 
+def format_time_12(hour: int, minute: int) -> str:
+    """12-hour clock: 0:05 -> "12:05 AM", 14:05 -> "2:05 PM" (``%-I`` doesn't work on Windows)."""
+    return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
 def build_messages(
     template: str,
     bot_name: str,
@@ -107,7 +112,11 @@ def build_messages(
     rules = [SUBJECT_RULE, DETAILS_RULE, DOCUMENTS_RULE] + ([LIST_RULE] if directory else [])
     system += "\n\n" + "\n\n".join(rule.format(client_name=client_name) for rule in rules)
     if now is not None:  # lets the assistant answer "is it open now?"
-        system += f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname() or 'local'})."
+        system += (
+            f"\n\nCurrent local time: {now.strftime('%A, %d %B %Y')}, {format_time_12(now.hour, now.minute)}"
+            f" ({now.tzname() or 'local'})."
+            "\nAlways write times in 12-hour format with AM/PM (for example 9:30 AM, 7 PM), never 24-hour."
+        )
     messages = [{"role": "system", "content": system}]
     for past_question, past_answer in history:
         messages.append({"role": "user", "content": past_question})
