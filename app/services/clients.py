@@ -30,6 +30,8 @@ DEFAULT_BRANDING: dict[str, Any] = {
     "logo_file": None,  # filename inside the client's branding folder
     # Icon on the round chat button: a built-in one (BUBBLE_ICONS) or "image" for an uploaded picture.
     "bubble_icon": "chat",
+    # Shape of the chat button: "speech" (round with a tail), "message" (rounded rectangle with a tail), "round".
+    "bubble_shape": "speech",
     "bubble_icon_file": None,  # filename inside the client's branding folder
     # Chat window size in percent of the screen (20-100). Phones: 100 x 100 is full screen.
     "width_pct": 25,
@@ -198,6 +200,7 @@ def document_settings(client: Client) -> dict[str, Any]:
 
 
 BUBBLE_ICONS = ("chat", "message", "headset", "help", "sparkle", "image")
+BUBBLE_SHAPES = ("speech", "message", "round")
 
 
 def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
@@ -208,6 +211,11 @@ def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
         if key == "bubble_icon":
             if value not in BUBBLE_ICONS:
                 raise ClientError(f"Bubble icon must be one of: {', '.join(BUBBLE_ICONS)}.")
+            clean[key] = value
+            continue
+        if key == "bubble_shape":
+            if value not in BUBBLE_SHAPES:
+                raise ClientError(f"Bubble shape must be one of: {', '.join(BUBBLE_SHAPES)}.")
             clean[key] = value
             continue
         if key == "primary_color":
@@ -335,6 +343,7 @@ def public_config(client: Client, chat_notice: str, logo_url: str | None) -> dic
         "mobile_height_pct": b["mobile_height_pct"],
         "logo_url": logo_url,
         "bubble_icon": b["bubble_icon"],
+        "bubble_shape": b["bubble_shape"],
         "bubble_icon_url": bubble_icon_url(client, "/api/client"),
         "notice": chat_notice,
         "powered_by": b["powered_by"],

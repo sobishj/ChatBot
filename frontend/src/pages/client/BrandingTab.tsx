@@ -1,8 +1,25 @@
 // Branding with a live preview rendered by the real widget.js (preview mode).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Branding, type BubbleIcon } from "../../api";
+import { api, type Branding, type BubbleIcon, type BubbleShape } from "../../api";
 import { Button, Card, Field, useAction } from "../../components/ui";
 import type { TabProps } from "./ClientDetail";
+
+const BUBBLE_SHAPES: [BubbleShape, string][] = [["speech", "Speech bubble"], ["message", "Message"], ["round", "Circle"]];
+
+/** A small drawing of the chat button's shape (the widget draws the real one with CSS). */
+function ShapePreview({ shape, color }: { shape: BubbleShape; color: string }) {
+  const body = shape === "message"
+    ? <rect x="2" y="4" width="36" height="28" rx="9" fill={color} />
+    : <circle cx="20" cy="18" r="16" fill={color} />;
+  const tail = shape === "speech" ? <path d="M26 30 L36 36 L32 26 Z" fill={color} /> : shape === "message" ? <path d="M26 31 L34 39 L33 31 Z" fill={color} /> : null;
+  return (
+    <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+      {body}
+      {tail}
+      <path d="M13 17h14M13 22h9" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 // Same shapes as the widget's BUBBLE_ICONS (app/widget/widget.js).
 const BUBBLE_ICON_CHOICES: [BubbleIcon, string, string][] = [
@@ -108,6 +125,7 @@ export function BrandingTab({ client, reload }: TabProps) {
     mobile_height_pct: b.mobile_height_pct,
     logo_url: client.logo_url ? `${location.origin}${client.logo_url}` : null,
     bubble_icon: b.bubble_icon ?? "chat",
+    bubble_shape: b.bubble_shape ?? "speech",
     bubble_icon_url: client.bubble_icon_url ? `${location.origin}${client.bubble_icon_url}` : null,
     notice,
     powered_by: b.powered_by,
@@ -192,6 +210,21 @@ export function BrandingTab({ client, reload }: TabProps) {
               <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = ""; }} />
             </div>
             <span className="hint">PNG, JPG, GIF or WebP, up to 1 MB. Square images look best.</span>
+          </div>
+          <div className="field full">
+            <span className="label">Chat button shape</span>
+            <div className="row" role="radiogroup" aria-label="Chat button shape">
+              {BUBBLE_SHAPES.map(([key, label]) => {
+                const chosen = (b.bubble_shape ?? "speech") === key;
+                return (
+                  <button key={key} type="button" role="radio" aria-checked={chosen} onClick={() => set("bubble_shape", key)}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "10px 14px 8px", borderRadius: 10, cursor: "pointer", background: "var(--surface)", border: chosen ? "2px solid var(--accent)" : "1px solid var(--border)" }}>
+                    <ShapePreview shape={key} color={b.primary_color} />
+                    <span className="small">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className="field full">
             <span className="label">Chat bubble icon</span>

@@ -133,6 +133,7 @@ export interface Job {
 }
 
 export type BubbleIcon = "chat" | "message" | "headset" | "help" | "sparkle" | "image";
+export type BubbleShape = "speech" | "message" | "round";
 
 export interface Branding {
   widget_enabled: boolean;
@@ -146,6 +147,7 @@ export interface Branding {
   powered_by_url: string;
   logo_file: string | null;
   bubble_icon: BubbleIcon;
+  bubble_shape: BubbleShape;
   bubble_icon_file?: string | null;
   width_pct: number;
   height_pct: number;

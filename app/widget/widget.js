@@ -105,6 +105,14 @@
     ".wa.right{right:20px}.wa.left{left:20px}",
     ".bubble{width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;background:var(--wa-primary);color:var(--wa-on-primary);box-shadow:0 6px 20px rgba(15,23,42,.25);display:grid;place-items:center;transition:transform .15s ease}",
     ".bubble:hover{transform:scale(1.05)}",
+    // Speech-bubble shapes: a tail at the bottom corner facing the page; drop-shadow follows the tail.
+    ".bubble.shape-speech,.bubble.shape-message{position:relative;box-shadow:none;filter:drop-shadow(0 6px 12px rgba(15,23,42,.3))}",
+    ".bubble.shape-speech::after,.bubble.shape-message::after{content:'';position:absolute;background:var(--wa-primary);pointer-events:none}",
+    ".bubble.shape-speech::after{width:22px;height:22px;bottom:-5px;right:0;clip-path:polygon(0 0,60% 0,100% 100%)}",
+    ".bubble.shape-message{width:64px;height:52px;border-radius:16px}",
+    ".bubble.shape-message::after{width:16px;height:12px;bottom:-10px;right:12px;clip-path:polygon(0 0,100% 0,100% 100%)}",
+    ".wa.left .bubble.shape-speech::after{right:auto;left:0;clip-path:polygon(40% 0,100% 0,0 100%)}",
+    ".wa.left .bubble.shape-message::after{right:auto;left:12px;clip-path:polygon(0 0,100% 0,0 100%)}",
     ".bubble:focus-visible,.icon-btn:focus-visible,.send:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #2563eb;outline-offset:2px}",
     ".bubble svg{width:28px;height:28px}",
     ".bubble img{width:62%;height:62%;object-fit:contain;border-radius:6px;pointer-events:none}",
@@ -217,6 +225,8 @@
     var busy = false;
 
     function setBubbleIcon(cfg) {
+      var shape = cfg.bubble_shape === "round" || cfg.bubble_shape === "message" ? cfg.bubble_shape : "speech";
+      bubble.className = "bubble shape-" + shape;
       bubble.innerHTML = "";
       if (cfg.bubble_icon === "image" && cfg.bubble_icon_url) {
         var pic = document.createElement("img");

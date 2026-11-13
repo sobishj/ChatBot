@@ -301,6 +301,10 @@ def test_chat_bubble_icon_choice_and_upload(db: Session, mall, monkeypatch: pyte
     assert root.put("/api/admin/clients/mall/branding", json={"bubble_icon": "headset"}).status_code == 200
     assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()["bubble_icon"] == "headset"
     assert root.put("/api/admin/clients/mall/branding", json={"bubble_icon": "rocket"}).status_code == 400
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()["bubble_shape"] == "speech"  # default
+    assert root.put("/api/admin/clients/mall/branding", json={"bubble_shape": "message"}).status_code == 200
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()["bubble_shape"] == "message"
+    assert root.put("/api/admin/clients/mall/branding", json={"bubble_shape": "star"}).status_code == 400
 
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     assert root.post("/api/admin/clients/mall/bubble-icon", files={"file": ("x.txt", b"not an image", "text/plain")}).status_code == 400
