@@ -1,8 +1,17 @@
 // Branding with a live preview rendered by the real widget.js (preview mode).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Branding } from "../../api";
+import { api, type Branding, type BubbleIcon } from "../../api";
 import { Button, Card, Field, useAction } from "../../components/ui";
 import type { TabProps } from "./ClientDetail";
+
+// Same shapes as the widget's BUBBLE_ICONS (app/widget/widget.js).
+const BUBBLE_ICON_CHOICES: [BubbleIcon, string, string][] = [
+  ["chat", "Chat", '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'],
+  ["message", "Message", '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/>'],
+  ["headset", "Support", '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>'],
+  ["help", "Help", '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5M12 17.5h.01"/>'],
+  ["sparkle", "AI", '<path d="M12 3l1.8 4.6 4.7 1.9-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'],
+];
 
 declare global {
   interface Window {
@@ -66,6 +75,7 @@ export function BrandingTab({ client, reload }: TabProps) {
   const stage = useRef<HTMLDivElement>(null);
   const handle = useRef<WidgetHandle | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const bubbleInput = useRef<HTMLInputElement>(null);
   const set = <K extends keyof Branding>(k: K, v: Branding[K]) => setB({ ...b, [k]: v });
 
   useEffect(() => {
@@ -97,6 +107,8 @@ export function BrandingTab({ client, reload }: TabProps) {
     mobile_width_pct: b.mobile_width_pct,
     mobile_height_pct: b.mobile_height_pct,
     logo_url: client.logo_url ? `${location.origin}${client.logo_url}` : null,
+    bubble_icon: b.bubble_icon ?? "chat",
+    bubble_icon_url: client.bubble_icon_url ? `${location.origin}${client.bubble_icon_url}` : null,
     notice,
     powered_by: b.powered_by,
     powered_by_text: b.powered_by_text,
@@ -114,6 +126,14 @@ export function BrandingTab({ client, reload }: TabProps) {
   });
   useEffect(() => { handle.current?.setDevice(device); }, [device]);
   useEffect(() => () => { handle.current?.destroy(); handle.current = null; }, []);
+
+  const uploadBubbleIcon = (file: File) => run(async () => {
+    const form = new FormData();
+    form.append("file", file);
+    await api(`/api/admin/clients/${client.client_id}/bubble-icon`, { form });
+    await reload();
+    setB((cur) => ({ ...cur, bubble_icon: "image" }));
+  }, "Bubble icon updated");
 
   const uploadLogo = (file: File) => run(async () => {
     const form = new FormData();
@@ -172,6 +192,28 @@ export function BrandingTab({ client, reload }: TabProps) {
               <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = ""; }} />
             </div>
             <span className="hint">PNG, JPG, GIF or WebP, up to 1 MB. Square images look best.</span>
+          </div>
+          <div className="field full">
+            <span className="label">Chat bubble icon</span>
+            <div className="row" role="radiogroup" aria-label="Chat bubble icon">
+              {BUBBLE_ICON_CHOICES.map(([key, label, paths]) => (
+                <button key={key} type="button" role="radio" aria-checked={(b.bubble_icon ?? "chat") === key} title={label}
+                  onClick={() => set("bubble_icon", key)}
+                  style={{ width: 48, height: 48, borderRadius: "50%", border: (b.bubble_icon ?? "chat") === key ? "3px solid var(--accent)" : "1px solid var(--border)", background: b.primary_color, color: "#fff", display: "grid", placeItems: "center", cursor: "pointer" }}>
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paths }} />
+                  <span className="sr-only">{label}</span>
+                </button>
+              ))}
+              <button type="button" role="radio" aria-checked={b.bubble_icon === "image"} title="Your image" disabled={!client.bubble_icon_url}
+                onClick={() => set("bubble_icon", "image")}
+                style={{ width: 48, height: 48, borderRadius: "50%", border: b.bubble_icon === "image" ? "3px solid var(--accent)" : "1px solid var(--border)", background: b.primary_color, display: "grid", placeItems: "center", cursor: client.bubble_icon_url ? "pointer" : "not-allowed", opacity: client.bubble_icon_url ? 1 : 0.4 }}>
+                {client.bubble_icon_url ? <img src={client.bubble_icon_url} alt="Your image" style={{ width: "62%", height: "62%", objectFit: "contain" }} /> : <span className="small" style={{ color: "#fff" }}>Img</span>}
+              </button>
+              <Button icon="upload" size="sm" onClick={() => bubbleInput.current?.click()} loading={busy}>Upload image</Button>
+              {client.bubble_icon_url && <Button size="sm" kind="ghost" onClick={() => run(async () => { await api(`/api/admin/clients/${client.client_id}/bubble-icon`, { method: "DELETE" }); await reload(); setB((cur) => ({ ...cur, bubble_icon: cur.bubble_icon === "image" ? "chat" : cur.bubble_icon })); }, "Bubble image removed")}>Remove image</Button>}
+              <input ref={bubbleInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBubbleIcon(f); e.target.value = ""; }} />
+            </div>
+            <span className="hint">The round button visitors click to open the chat. Pick an icon, or upload your own (PNG, JPG, GIF or WebP, up to 1 MB; a square image with a transparent background looks best). Click Save to apply an icon choice.</span>
           </div>
           <label className="check full"><input type="checkbox" checked={b.powered_by} onChange={(e) => set("powered_by", e.target.checked)} />Show “Powered by” footer</label>
           {b.powered_by && (

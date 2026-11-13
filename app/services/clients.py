@@ -28,6 +28,9 @@ DEFAULT_BRANDING: dict[str, Any] = {
     "powered_by_text": "Powered by Website Assistant",
     "powered_by_url": "",
     "logo_file": None,  # filename inside the client's branding folder
+    # Icon on the round chat button: a built-in one (BUBBLE_ICONS) or "image" for an uploaded picture.
+    "bubble_icon": "chat",
+    "bubble_icon_file": None,  # filename inside the client's branding folder
     # Chat window size in percent of the screen (20-100). Phones: 100 x 100 is full screen.
     "width_pct": 25,
     "height_pct": 70,
@@ -194,10 +197,18 @@ def document_settings(client: Client) -> dict[str, Any]:
     return {**DEFAULT_DOCUMENT_SETTINGS, **(client.document_settings or {})}
 
 
+BUBBLE_ICONS = ("chat", "message", "headset", "help", "sparkle", "image")
+
+
 def validate_branding(changes: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in changes.items():
-        if key not in DEFAULT_BRANDING or key == "logo_file":
+        if key not in DEFAULT_BRANDING or key in ("logo_file", "bubble_icon_file"):
+            continue
+        if key == "bubble_icon":
+            if value not in BUBBLE_ICONS:
+                raise ClientError(f"Bubble icon must be one of: {', '.join(BUBBLE_ICONS)}.")
+            clean[key] = value
             continue
         if key == "primary_color":
             if not isinstance(value, str) or not HEX_COLOR_RE.match(value):
@@ -299,6 +310,14 @@ def client_to_dict(client: Client, counts: dict[str, int] | None = None) -> dict
     }
 
 
+def bubble_icon_url(client: Client, base: str) -> str | None:
+    """Link to the uploaded bubble image when the client chose one, else None (built-in icon)."""
+    b = client.branding or {}
+    if b.get("bubble_icon") != "image" or not b.get("bubble_icon_file"):
+        return None
+    return f"{base}/{client.client_id}/bubble-icon?v={b.get('bubble_icon_version', 0)}"
+
+
 def public_config(client: Client, chat_notice: str, logo_url: str | None) -> dict[str, Any]:
     """Branding for the widget. Contains NO secrets or internal settings."""
     b = branding(client)
@@ -315,6 +334,8 @@ def public_config(client: Client, chat_notice: str, logo_url: str | None) -> dic
         "mobile_width_pct": b["mobile_width_pct"],
         "mobile_height_pct": b["mobile_height_pct"],
         "logo_url": logo_url,
+        "bubble_icon": b["bubble_icon"],
+        "bubble_icon_url": bubble_icon_url(client, "/api/client"),
         "notice": chat_notice,
         "powered_by": b["powered_by"],
         "powered_by_text": b["powered_by_text"] if b["powered_by"] else "",

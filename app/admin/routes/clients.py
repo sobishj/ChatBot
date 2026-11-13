@@ -35,6 +35,7 @@ from app.services import jobs as job_service
 from app.services.ai_models import model_to_dict
 from app.services.clients import (
     ClientError,
+    bubble_icon_url,
     client_counts,
     client_data_dir,
     client_to_dict,
@@ -75,6 +76,7 @@ def _detail(db: Session, client: Client, user: User) -> dict[str, Any]:
         job_service.job_to_dict(j) for j in db.scalars(select(Job).where(Job.client_id == client.id).order_by(Job.id.desc()).limit(10))
     ]
     data["logo_url"] = _admin_logo_url(client)
+    data["bubble_icon_url"] = bubble_icon_url(client, "/api/admin/clients")
     data["can_edit_settings"] = user.role == "super_admin"
     data["mode"] = values["mode"]
     return data
@@ -439,25 +441,59 @@ def update_branding(
     return {"client": _detail(db, client, user)}
 
 
-@router.post("/{client_id}/logo")
-def upload_logo(
-    file: UploadFile = File(...), client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)
-) -> dict[str, Any]:
+def _store_branding_image(client: Client, file: UploadFile, stem: str) -> str:
+    """Validate and save an uploaded image as <stem>.<ext> in the client's branding folder; returns the filename."""
     data = file.file.read(LOGO_MAX_BYTES + 1)
     if len(data) > LOGO_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Logo must be 1 MB or smaller.")
+        raise HTTPException(status_code=400, detail="The image must be 1 MB or smaller.")
     kind = next((v for magic, v in LOGO_TYPES.items() if data.startswith(magic)), None)
     if kind is None or (kind[0] == "webp" and data[8:12] != b"WEBP"):
         raise HTTPException(status_code=400, detail="Upload a PNG, JPG, GIF or WebP image.")
     folder = client_data_dir(client.client_id) / "branding"
     folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.glob("logo.*"):
+    for old in folder.glob(f"{stem}.*"):
         old.unlink(missing_ok=True)
-    filename = f"logo.{kind[0]}"
+    filename = f"{stem}.{kind[0]}"
     (folder / filename).write_bytes(data)
+    return filename
+
+
+@router.post("/{client_id}/logo")
+def upload_logo(
+    file: UploadFile = File(...), client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    filename = _store_branding_image(client, file, "logo")
     client.branding = {**(client.branding or {}), "logo_file": filename, "logo_version": int(time.time())}
     db.commit()
     return {"client": _detail(db, client, user)}
+
+
+@router.post("/{client_id}/bubble-icon")
+def upload_bubble_icon(
+    file: UploadFile = File(...), client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Upload a picture for the round chat button; it becomes the chosen bubble icon."""
+    filename = _store_branding_image(client, file, "bubble-icon")
+    client.branding = {**(client.branding or {}), "bubble_icon": "image", "bubble_icon_file": filename, "bubble_icon_version": int(time.time())}
+    db.commit()
+    return {"client": _detail(db, client, user)}
+
+
+@router.delete("/{client_id}/bubble-icon")
+def delete_bubble_icon(client: Client = Depends(get_client_for_user), user: User = Depends(require_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    folder = client_data_dir(client.client_id) / "branding"
+    for old in folder.glob("bubble-icon.*"):
+        old.unlink(missing_ok=True)
+    b = client.branding or {}
+    icon = b.get("bubble_icon", "chat")
+    client.branding = {**b, "bubble_icon_file": None, "bubble_icon": "chat" if icon == "image" else icon}
+    db.commit()
+    return {"client": _detail(db, client, user)}
+
+
+@router.get("/{client_id}/bubble-icon")
+def get_bubble_icon(client: Client = Depends(get_client_for_user)) -> FileResponse:
+    return branding_image_response(client, "bubble_icon_file")
 
 
 @router.delete("/{client_id}/logo")
@@ -476,10 +512,15 @@ def get_logo(client: Client = Depends(get_client_for_user)) -> FileResponse:
 
 
 def logo_response(client: Client) -> FileResponse:
-    filename = (client.branding or {}).get("logo_file")
+    return branding_image_response(client, "logo_file")
+
+
+def branding_image_response(client: Client, key: str) -> FileResponse:
+    """Serve the client's logo or bubble icon image (``key`` names its branding field)."""
+    filename = (client.branding or {}).get(key)
     path = client_data_dir(client.client_id) / "branding" / filename if filename else None
     if path is None or not path.is_file():
-        raise HTTPException(status_code=404, detail="No logo.")
+        raise HTTPException(status_code=404, detail="No image.")
     media = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}.get(path.suffix[1:], "application/octet-stream")
     return FileResponse(
         path,

@@ -251,3 +251,4 @@ table.table { width: 100%; border-collapse: collapse; }
 .split-preview { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); align-items: start; }
 .split-chat { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: start; }
 @media (max-width: 1000px) { .split-preview, .split-chat { grid-template-columns: 1fr; } }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

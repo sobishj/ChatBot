@@ -285,3 +285,32 @@ def test_model_priority_api(db: Session, embedder, monkeypatch: pytest.MonkeyPat
     assert api.post(f"/api/admin/models/{first}/default").json()["priority"] == [first, second]
     assert api.put("/api/admin/models/priority", json={"model_ids": []}).status_code == 400
     assert api.put("/api/admin/models/priority", json={"model_ids": [999999]}).status_code == 404
+
+
+def test_chat_bubble_icon_choice_and_upload(db: Session, mall, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    public = TestClient(create_public_app())
+    config = public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()
+    assert config["bubble_icon"] == "chat" and config["bubble_icon_url"] is None  # default
+
+    root = admin_client()
+    finish_setup(db, root, monkeypatch)
+    assert root.put("/api/admin/clients/mall/branding", json={"bubble_icon": "headset"}).status_code == 200
+    assert public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()["bubble_icon"] == "headset"
+    assert root.put("/api/admin/clients/mall/branding", json={"bubble_icon": "rocket"}).status_code == 400
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    assert root.post("/api/admin/clients/mall/bubble-icon", files={"file": ("x.txt", b"not an image", "text/plain")}).status_code == 400
+    detail = root.post("/api/admin/clients/mall/bubble-icon", files={"file": ("icon.png", png, "image/png")}).json()["client"]
+    assert detail["branding"]["bubble_icon"] == "image" and detail["bubble_icon_url"].startswith("/api/admin/clients/mall/bubble-icon")
+    config = public.get("/api/client/mall/config", headers={"Origin": ORIGIN}).json()
+    assert config["bubble_icon"] == "image" and config["bubble_icon_url"].startswith("/api/client/mall/bubble-icon?v=")
+    served = public.get(config["bubble_icon_url"])
+    assert served.status_code == 200 and served.headers["content-type"] == "image/png" and served.content == png
+
+    removed = root.delete("/api/admin/clients/mall/bubble-icon").json()["client"]
+    assert removed["branding"]["bubble_icon"] == "chat" and removed["bubble_icon_url"] is None
+    assert public.get("/api/client/mall/bubble-icon").status_code == 404

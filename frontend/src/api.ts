@@ -132,6 +132,8 @@ export interface Job {
   log?: string;
 }
 
+export type BubbleIcon = "chat" | "message" | "headset" | "help" | "sparkle" | "image";
+
 export interface Branding {
   widget_enabled: boolean;
   bot_name: string;
@@ -143,6 +145,8 @@ export interface Branding {
   powered_by_text: string;
   powered_by_url: string;
   logo_file: string | null;
+  bubble_icon: BubbleIcon;
+  bubble_icon_file?: string | null;
   width_pct: number;
   height_pct: number;
   mobile_width_pct: number;
@@ -174,6 +178,7 @@ export interface Client {
   active_jobs?: Job[];
   recent_jobs?: Job[];
   logo_url?: string | null;
+  bubble_icon_url?: string | null;
   can_edit_settings?: boolean;
   mode?: string;
 }

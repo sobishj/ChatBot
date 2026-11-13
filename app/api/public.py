@@ -108,6 +108,16 @@ def client_config(client_id: str, request: Request, db: Session = Depends(get_db
     return JSONResponse(config, headers={**cors_headers(origin), "Cache-Control": "no-cache"})
 
 
+@router.get("/api/client/{client_id}/bubble-icon")
+def client_bubble_icon(client_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    from app.admin.routes.clients import branding_image_response
+
+    client = get_by_slug(db, client_id)
+    if client is None or not client.active:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return branding_image_response(client, "bubble_icon_file")
+
+
 @router.get("/api/client/{client_id}/logo")
 def client_logo(client_id: str, db: Session = Depends(get_db)) -> FileResponse:
     from app.admin.routes.clients import logo_response

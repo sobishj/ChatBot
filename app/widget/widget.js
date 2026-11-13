@@ -107,6 +107,7 @@
     ".bubble:hover{transform:scale(1.05)}",
     ".bubble:focus-visible,.icon-btn:focus-visible,.send:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #2563eb;outline-offset:2px}",
     ".bubble svg{width:28px;height:28px}",
+    ".bubble img{width:62%;height:62%;object-fit:contain;border-radius:6px;pointer-events:none}",
     // Size: --wa-w/--wa-h (desktop) and --wa-mw/--wa-mh (phones) are percentages of the screen,
     // set from the branding settings. Minimums keep the chat usable on small screens.
     ".panel{position:absolute;bottom:74px;width:calc(var(--wa-w,25) * 1vw);min-width:min(300px,calc(100vw - 40px));max-width:calc(100vw - 40px);height:calc(var(--wa-h,70) * 1vh);min-height:min(360px,calc(100vh - 110px));max-height:calc(100vh - 110px);background:#fff;border-radius:16px;box-shadow:0 18px 50px rgba(15,23,42,.28);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(15,23,42,.08)}",
@@ -158,7 +159,18 @@
     "@media (prefers-reduced-motion:reduce){.bubble,.typing i{transition:none;animation:none}}"
   ].join("");
 
-  var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
+  // Icons for the round chat button (Branding tab -> Chat bubble icon). The admin UI shows the same shapes.
+  function svgIcon(paths) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + "</svg>";
+  }
+  var BUBBLE_ICONS = {
+    chat: svgIcon('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
+    message: svgIcon('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/>'),
+    headset: svgIcon('<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>'),
+    help: svgIcon('<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5M12 17.5h.01"/>'),
+    sparkle: svgIcon('<path d="M12 3l1.8 4.6 4.7 1.9-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>')
+  };
+  var ICON_CHAT = BUBBLE_ICONS.chat;
   var ICON_CLOSE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   var ICON_SEND = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
@@ -204,8 +216,23 @@
     var bubble = root.querySelector(".bubble");
     var busy = false;
 
+    function setBubbleIcon(cfg) {
+      bubble.innerHTML = "";
+      if (cfg.bubble_icon === "image" && cfg.bubble_icon_url) {
+        var pic = document.createElement("img");
+        pic.alt = "";
+        var u = cfg.bubble_icon_url;
+        pic.src = u.indexOf("http") === 0 || u.indexOf("blob:") === 0 || u.indexOf("data:") === 0 ? u : apiBase + u;
+        pic.addEventListener("error", function () { bubble.innerHTML = ICON_CHAT; }); // a broken image falls back to the chat icon
+        bubble.appendChild(pic);
+      } else {
+        bubble.innerHTML = BUBBLE_ICONS[cfg.bubble_icon] || ICON_CHAT;
+      }
+    }
+
     function applyConfig(cfg) {
       config = cfg;
+      setBubbleIcon(cfg);
       t = STRINGS[(cfg.default_language || "en").slice(0, 2)] || STRINGS.en;
       wrap.className = "wa " + (cfg.position === "left" ? "left" : "right") + (options.container ? " embedded" : "") + (options.container && device === "mobile" ? " mobile" : "");
       wrap.style.setProperty("--wa-primary", cfg.primary_color || "#1f5f5b");
