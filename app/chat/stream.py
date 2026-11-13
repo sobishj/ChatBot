@@ -17,6 +17,7 @@ from app.chat.service import ChatResponse, answer_question, prepare_answer
 from app.db.models import Client
 from app.db.session import new_session
 from app.embeddings.model import Embedder, EmbeddingNotReady
+from app.llm import health
 from app.llm.client import LLMError, LLMResult, ModelConfig, stream_complete
 
 logger = logging.getLogger(__name__)
@@ -64,15 +65,20 @@ class VisibleText:
 
 
 def _model_stream(stream_llm: StreamLLM, chain: list[ModelConfig], messages: list[dict[str, str]]) -> Iterator[tuple[str | LLMResult, bool]]:
-    """Stream from the models in priority order; one that fails before writing anything hands over to the next."""
+    """Stream from the models in priority order (failing ones last); one that fails before writing anything
+    hands over to the next."""
+    first = chain[0] if chain else None
+    chain = health.healthy_first(chain)
     for i, cfg in enumerate(chain):
         wrote = False
         try:
             for item in stream_llm(cfg, messages):
                 wrote = wrote or isinstance(item, str)
-                yield item, i > 0
+                yield item, cfg is not first
+            health.record_success(cfg)
             return
         except LLMError as exc:
+            health.record_failure(cfg, exc)
             if wrote or i + 1 == len(chain):
                 raise
             logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)

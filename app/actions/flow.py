@@ -39,6 +39,7 @@ from app.chat.pii import tokenize_pii
 from app.chat.prompt import build_messages, parse_answer
 from app.db.models import ActionCall, Client, ClientAction
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
+from app.llm import health
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, ToolsUnsupported
 from app.search.hybrid import is_list_question, search
 from app.services import rate_limit
@@ -109,13 +110,18 @@ class _Run:
 def _call(
     tool_llm: Callable[..., ToolResult], chain: list[ModelConfig], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
 ) -> tuple[ToolResult, bool]:
-    """Same rule as plain answers: try the models in priority order until one answers."""
+    """Same rule as plain answers: try the models in priority order (failing ones last) until one answers."""
+    first = chain[0] if chain else None
+    chain = health.healthy_first(chain)
     for i, cfg in enumerate(chain):
         try:
-            return tool_llm(cfg, messages, tools), i > 0
+            result = tool_llm(cfg, messages, tools)
+            health.record_success(cfg)
+            return result, cfg is not first
         except ToolsUnsupported:
             raise
         except LLMError as exc:
+            health.record_failure(cfg, exc)
             if i + 1 == len(chain):
                 raise
             logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)

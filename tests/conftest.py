@@ -139,3 +139,13 @@ def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> None:
         raise render.BrowserUnavailable("no browser in tests")
 
     monkeypatch.setattr(render, "_sync_playwright", unavailable)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_model_health() -> Iterator[None]:
+    """Model cooldowns (app.llm.health) never leak from one test into another."""
+    from app.llm import health
+
+    health.reset()
+    yield
+    health.reset()

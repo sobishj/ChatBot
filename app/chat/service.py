@@ -22,6 +22,7 @@ from app.chat.pii import mask_pii
 from app.chat.prompt import build_messages, parse_answer
 from app.db.models import Client, Question
 from app.embeddings.model import Embedder, EmbeddingNotReady, get_embedder
+from app.llm import health
 from app.llm.client import LLMError, LLMResult, ModelConfig, ToolResult, complete, complete_with_tools
 from app.search.hybrid import SearchHit, is_list_question, search, words
 from app.services.ai_models import resolve_chain
@@ -117,11 +118,16 @@ def sources_from_hits(hits: list[SearchHit], limit: int = MAX_SOURCES) -> list[d
 
 
 def _call_with_fallback(chain: list[ModelConfig], messages: list[dict[str, str]], llm: Callable[..., LLMResult]) -> tuple[LLMResult, bool]:
-    """Try the models in priority order; returns (result, whether a lower-priority model answered)."""
+    """Try the models in priority order (failing ones last); returns (result, whether another model answered)."""
+    original = chain
+    chain = health.healthy_first(chain)
     for i, cfg in enumerate(chain):
         try:
-            return llm(cfg, messages), i > 0
+            result = llm(cfg, messages)
+            health.record_success(cfg)
+            return result, cfg is not original[0]
         except LLMError as exc:
+            health.record_failure(cfg, exc)
             if i + 1 == len(chain):
                 raise
             logger.warning("Model %s failed (%s); trying %s", cfg.display_name, exc, chain[i + 1].display_name)

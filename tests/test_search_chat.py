@@ -209,3 +209,63 @@ def test_unanswered_questions_get_the_contact_details(db: Session, embedder, mal
     db.commit()
     r = answer_question(db, mall, "session-contact-4", "Where is ASICS?", llm=FakeLLM(reply="Second floor"))
     assert not r.answered and r.answer == "Second floor"
+
+
+def test_failing_model_is_skipped_until_its_cooldown_ends(db: Session, embedder, mall, ai_model, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import health
+    from app.llm.client import LLMError
+    from app.services.ai_models import resolve_chain, set_priority
+
+    backup = save_model(db, {"name": "Backup", "provider": "openai_compatible", "base_url": "http://y/v1", "model_name": "backup-model"})
+    set_priority(db, [ai_model.id, backup.id])
+    db.commit()
+
+    class ServiceUnavailableError(Exception):
+        pass
+
+    calls: list[str] = []
+
+    def llm(cfg, messages, max_tokens=None):
+        calls.append(cfg.model_name)
+        if cfg.model_name == "main-model":
+            raise LLMError("busy") from ServiceUnavailableError("503 high demand")
+        return FakeLLM(reply="From the backup.")(cfg, messages)
+
+    first = answer_question(db, mall, "session-cool-1", "Where is ASICS?", llm=llm)
+    assert calls == ["main-model", "backup-model"] and first.answer == "From the backup."
+    calls.clear()
+    second = answer_question(db, mall, "session-cool-2", "Where is ASICS?", llm=llm)
+    assert calls == ["backup-model"] and second.used_fallback  # the busy model is skipped: no waiting for it again
+
+    # After the cooldown it is tried first again; a success clears it.
+    monkeypatch.setattr(health.time, "monotonic", lambda: 10_000_000.0)
+    calls.clear()
+    answer_question(db, mall, "session-cool-3", "Where is ASICS?", llm=FakeLLM())
+    main = next(c for c in resolve_chain(db, mall) if c.model_name == "main-model")
+    assert not health.cooling(main)
+
+
+def test_request_errors_do_not_trigger_a_cooldown() -> None:
+    from app.llm import health
+    from app.llm.client import LLMError, ModelConfig
+
+    class BadRequestError(Exception):
+        pass
+
+    cfg = ModelConfig(provider="openai", model_name="m")
+    health.record_failure(cfg, LLMError("bad input"))  # no cause: e.g. the tests' fake model
+    try:
+        raise LLMError("rejected") from BadRequestError("400")
+    except LLMError as exc:
+        health.record_failure(cfg, exc)
+    assert not health.cooling(cfg)
+
+    class RateLimitError(Exception):
+        pass
+
+    try:
+        raise LLMError("slow down") from RateLimitError("429")
+    except LLMError as exc:
+        health.record_failure(cfg, exc)
+    assert health.cooling(cfg)
+    assert health.healthy_first([cfg, ModelConfig(provider="openai", model_name="other")])[0].model_name == "other"
